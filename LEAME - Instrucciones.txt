@@ -1,0 +1,40 @@
+==========================================================
+   HERRAMIENTAS DEL ESTUDIO  -  Instrucciones
+==========================================================
+
+Es un programa que se usa en el navegador (Chrome o Edge),
+pero corre en tu propia computadora. Tus archivos NO se suben
+a internet: todo queda en tu PC.
+
+
+PASO 1 - Instalar Python   (solo la primera vez, si no lo tenes)
+----------------------------------------------------------
+  1) Entra a:  https://www.python.org/downloads/
+  2) Descarga e instala Python (version 3.10 o superior).
+  3) IMPORTANTE: en la PRIMERA pantalla del instalador, tilda
+     la casilla  "Add python.exe to PATH"  y recien ahi
+     toca "Install Now".
+
+
+PASO 2 - Instalar el programa   (solo la primera vez)
+----------------------------------------------------------
+  - Doble clic en  "Instalar.bat"
+  - Se abre una ventana negra y tarda unos minutos.
+  - Cuando diga  "Listo!"  podes cerrar esa ventana.
+
+
+PASO 3 - Abrir el programa   (cada vez que lo quieras usar)
+----------------------------------------------------------
+  - Doble clic en  "Abrir programa.bat"
+  - Se abre solo en el navegador.
+  - Si no se abre, copia esta direccion en el navegador:
+        http://localhost:8501
+  - NO cierres la ventana negra mientras lo usas.
+    Para cerrar el programa, cerra esa ventana negra.
+
+
+Podes mover o renombrar esta carpeta donde quieras;
+el programa funciona igual.
+
+Cualquier duda, consultá con quien te paso el programa.
+==========================================================

@@ -1,0 +1,19 @@
+# Entorno e instalación
+.venv/
+__pycache__/
+*.pyc
+
+# Secretos (¡NO subir la contraseña!)
+.streamlit/secrets.toml
+
+# Datos / salidas generadas (no subir datos de clientes)
+evidencia_microenv/
+server.log
+*.xlsx
+*.xls
+diferencias_*.xlsx
+extracto_*.xlsx
+
+# Sistema
+.DS_Store
+Thumbs.db

@@ -1,0 +1,731 @@
+{
+  "cuentas": [
+    {
+      "codigo": "100000000",
+      "detalle": "ACTIVOS"
+    },
+    {
+      "codigo": "110000000",
+      "detalle": "ACTIVOS"
+    },
+    {
+      "codigo": "111000000",
+      "detalle": "ACTIVOS CORRIENTES"
+    },
+    {
+      "codigo": "111010000",
+      "detalle": "DISPONIBILIDADES"
+    },
+    {
+      "codigo": "111010100",
+      "detalle": "CAJA"
+    },
+    {
+      "codigo": "111010200",
+      "detalle": "FONDO RESERVA"
+    },
+    {
+      "codigo": "111010300",
+      "detalle": "CHEQUES DE TERCEROS"
+    },
+    {
+      "codigo": "111011000",
+      "detalle": "MONEDA EXTRANJERA"
+    },
+    {
+      "codigo": "111012000",
+      "detalle": "DIFERENCIAS DE CAJA"
+    },
+    {
+      "codigo": "111013000",
+      "detalle": "Salidas Caja sin aplicar"
+    },
+    {
+      "codigo": "111014000",
+      "detalle": "Gastos Tarjetas a Registrar"
+    },
+    {
+      "codigo": "111020000",
+      "detalle": "TARJETAS A COBRAR"
+    },
+    {
+      "codigo": "111021000",
+      "detalle": "BANCOS CUENTA CORRIENTE"
+    },
+    {
+      "codigo": "111022000",
+      "detalle": "BANCO CREDICOOP"
+    },
+    {
+      "codigo": "111023000",
+      "detalle": "BANCO PROVINCIA BS.AS."
+    },
+    {
+      "codigo": "111024000",
+      "detalle": "BANCO NACION"
+    },
+    {
+      "codigo": "111025000",
+      "detalle": "CHEQUES RECHAZADOS"
+    },
+    {
+      "codigo": "111026000",
+      "detalle": "BANCO PATAGONIA"
+    },
+    {
+      "codigo": "111027000",
+      "detalle": "POSNET"
+    },
+    {
+      "codigo": "111027100",
+      "detalle": "PLAZOS FIJOS"
+    },
+    {
+      "codigo": "111028000",
+      "detalle": "INVIU"
+    },
+    {
+      "codigo": "111029000",
+      "detalle": "BANCO PROVINCIA BA DOLARES"
+    },
+    {
+      "codigo": "112000000",
+      "detalle": "MERCADO PAGO"
+    },
+    {
+      "codigo": "112010000",
+      "detalle": "CREDITOS"
+    },
+    {
+      "codigo": "112011000",
+      "detalle": "DEUDORES POR VENTAS"
+    },
+    {
+      "codigo": "112020000",
+      "detalle": "ANTICIPO A PROVEEDORES"
+    },
+    {
+      "codigo": "112030000",
+      "detalle": "ADELANTOS AL PERSONAL"
+    },
+    {
+      "codigo": "112031000",
+      "detalle": "RETENCIONES DE IVA"
+    },
+    {
+      "codigo": "112032000",
+      "detalle": "RET.CONTRI.SEG.SOC."
+    },
+    {
+      "codigo": "112033000",
+      "detalle": "SDO TECNICO IVA"
+    },
+    {
+      "codigo": "112040000",
+      "detalle": "SDO LIBRE DISPONIBILIDAD"
+    },
+    {
+      "codigo": "112050000",
+      "detalle": "RETENCIONES I.BRUTOS"
+    },
+    {
+      "codigo": "112051000",
+      "detalle": "RETENCIONES DE GANANCIAS"
+    },
+    {
+      "codigo": "112060000",
+      "detalle": "IMP DEBITOS-CREDITOS"
+    },
+    {
+      "codigo": "112070000",
+      "detalle": "ANTICIPO DE GANANCIAS"
+    },
+    {
+      "codigo": "112080000",
+      "detalle": "REINTEGRO A PERC.A ANSES"
+    },
+    {
+      "codigo": "112090000",
+      "detalle": "CTA. PARTIC.VOLPE HORACIO"
+    },
+    {
+      "codigo": "112091000",
+      "detalle": "CTA.PART.FANTINO TERESA"
+    },
+    {
+      "codigo": "112100000",
+      "detalle": "CTA.PARTC VOLPE LUCIANO HORACIO"
+    },
+    {
+      "codigo": "112110000",
+      "detalle": "IVA CREDITO FISCAL"
+    },
+    {
+      "codigo": "112120000",
+      "detalle": "SALDO A FAVOR INGR BRUTOS"
+    },
+    {
+      "codigo": "113000000",
+      "detalle": "SALDO A FAVOR IMP GANANCIAS"
+    },
+    {
+      "codigo": "113010000",
+      "detalle": "BIENES DE CAMBIO"
+    },
+    {
+      "codigo": "113020000",
+      "detalle": "MERCADERIA DE REVENTA"
+    },
+    {
+      "codigo": "113030000",
+      "detalle": "PRODUCTOS ELABORADOS"
+    },
+    {
+      "codigo": "113040000",
+      "detalle": "MATERIAS PRIMAS"
+    },
+    {
+      "codigo": "113050000",
+      "detalle": "INSUMOS VARIOS FABRICA"
+    },
+    {
+      "codigo": "120000000",
+      "detalle": "INSUMOS VARIOS ADMINISTR."
+    },
+    {
+      "codigo": "121000000",
+      "detalle": "ACTIVOS NO CORRIENTES"
+    },
+    {
+      "codigo": "121009000",
+      "detalle": "BIENES DE USO"
+    },
+    {
+      "codigo": "121010000",
+      "detalle": "INMUEBLES"
+    },
+    {
+      "codigo": "121011000",
+      "detalle": "MAQUINAS Y HERRAMIENTAS"
+    },
+    {
+      "codigo": "121020000",
+      "detalle": "FONDO AMORTIZ MAQ Y HERRAM"
+    },
+    {
+      "codigo": "121021000",
+      "detalle": "MUEBLES Y UTILES"
+    },
+    {
+      "codigo": "121030000",
+      "detalle": "FONDO AMORTIZ M.Y UTILES"
+    },
+    {
+      "codigo": "121031000",
+      "detalle": "INSTALACIONES"
+    },
+    {
+      "codigo": "121032000",
+      "detalle": "FONDO AMORTIZ INSTALACIONES"
+    },
+    {
+      "codigo": "121033000",
+      "detalle": "INSTALAC PARQUE"
+    },
+    {
+      "codigo": "121040000",
+      "detalle": "INSTALACIONES ADMINISTRACION"
+    },
+    {
+      "codigo": "121041000",
+      "detalle": "RODADOS"
+    },
+    {
+      "codigo": "121050000",
+      "detalle": "FONDO AMORTIZ RODADOS"
+    },
+    {
+      "codigo": "200000000",
+      "detalle": "MEJORA MAQ.Y HERRAMIENTAS"
+    },
+    {
+      "codigo": "210000000",
+      "detalle": "PASIVOS"
+    },
+    {
+      "codigo": "210100000",
+      "detalle": "PASIVOS CORRIENTES"
+    },
+    {
+      "codigo": "210200000",
+      "detalle": "PROVEEDORES"
+    },
+    {
+      "codigo": "210300000",
+      "detalle": "ACREEDORES VARIOS"
+    },
+    {
+      "codigo": "210400000",
+      "detalle": "CHEQUES DIF.EMITIDOS"
+    },
+    {
+      "codigo": "210500000",
+      "detalle": "SUELDOS A PAGAR"
+    },
+    {
+      "codigo": "210510000",
+      "detalle": "CARGAS SOCIALES A PAGAR"
+    },
+    {
+      "codigo": "210520000",
+      "detalle": "OTRAS CARGAS A PAGAR"
+    },
+    {
+      "codigo": "210600000",
+      "detalle": "PRESTAMO SINDICATO A PAGAR"
+    },
+    {
+      "codigo": "210610000",
+      "detalle": "INGRESOS BRUTOS A PAGAR"
+    },
+    {
+      "codigo": "210610010",
+      "detalle": "PERCEP. ING. BRUTOS A PAGAR"
+    },
+    {
+      "codigo": "210620000",
+      "detalle": "AJUSTES"
+    },
+    {
+      "codigo": "210630000",
+      "detalle": "PER INGR BRUTOS A PAGAR BSAS"
+    },
+    {
+      "codigo": "210700000",
+      "detalle": "RET INGR BRUTOS A PAGAR BSAS"
+    },
+    {
+      "codigo": "210710000",
+      "detalle": "DEUDAS BANCARIAS"
+    },
+    {
+      "codigo": "210720000",
+      "detalle": "DEUDA BCO PCIA Nº 024689"
+    },
+    {
+      "codigo": "210720010",
+      "detalle": "DEUDA BCO PCIA Nº 386849"
+    },
+    {
+      "codigo": "210720020",
+      "detalle": "DEUDA BCO PCIA Nº 626199"
+    },
+    {
+      "codigo": "210720030",
+      "detalle": "DEUDA BCO PCIA Nº 648103"
+    },
+    {
+      "codigo": "210720040",
+      "detalle": "DEUDA BCO NACION"
+    },
+    {
+      "codigo": "210720050",
+      "detalle": "DEUDA BCO PCIA Nº 262787"
+    },
+    {
+      "codigo": "210730000",
+      "detalle": "DEUDA BCO PCIA Nº 958048"
+    },
+    {
+      "codigo": "210800000",
+      "detalle": "DEUDA BANCO CREDICOOP"
+    },
+    {
+      "codigo": "210800010",
+      "detalle": "DEUDAS FISCALES"
+    },
+    {
+      "codigo": "210801000",
+      "detalle": "IVA POSICION A PAGAR"
+    },
+    {
+      "codigo": "210802000",
+      "detalle": "IMP A LAS GANANCIAS A PAGAR"
+    },
+    {
+      "codigo": "210803000",
+      "detalle": "AFIP -PLAN FACILIDADES"
+    },
+    {
+      "codigo": "210900000",
+      "detalle": "INTERESES CEDIDOS A DEVENGAR"
+    },
+    {
+      "codigo": "210910000",
+      "detalle": "DEUDAS PREVISIONALES"
+    },
+    {
+      "codigo": "210920000",
+      "detalle": "IVA DEBITO FISCAL"
+    },
+    {
+      "codigo": "210930000",
+      "detalle": "TASAS MUNICIPALES A PAGAR"
+    },
+    {
+      "codigo": "210940000",
+      "detalle": "OTRAS DEUDAS"
+    },
+    {
+      "codigo": "220000000",
+      "detalle": "MORATORIA PROVINCIAL"
+    },
+    {
+      "codigo": "220100000",
+      "detalle": "PASIVOS NO CORRIENTES"
+    },
+    {
+      "codigo": "220110000",
+      "detalle": "DEUDAS BANCARIAS"
+    },
+    {
+      "codigo": "220120000",
+      "detalle": "DEUDAS BCO. CREDICOOP"
+    },
+    {
+      "codigo": "220130000",
+      "detalle": "DEUDAS BCO.PCIA.BS.AS."
+    },
+    {
+      "codigo": "300000000",
+      "detalle": "DEUDAS BANCO RIO"
+    },
+    {
+      "codigo": "310000000",
+      "detalle": "PATRIMONIO NETO"
+    },
+    {
+      "codigo": "311000000",
+      "detalle": "CAPITAL SOCIAL"
+    },
+    {
+      "codigo": "312000000",
+      "detalle": "FUTUROS AUMENTO CAPITAL"
+    },
+    {
+      "codigo": "320000000",
+      "detalle": "AJUSTE DE CAPITAL"
+    },
+    {
+      "codigo": "325000000",
+      "detalle": "RESERVA LEGAL"
+    },
+    {
+      "codigo": "330000000",
+      "detalle": "SALDO REMEDICION RT 48"
+    },
+    {
+      "codigo": "340000000",
+      "detalle": "RESULT.DEL EJERCICIO"
+    },
+    {
+      "codigo": "400000000",
+      "detalle": "RESULT.EJERC.ANTERIORES"
+    },
+    {
+      "codigo": "410000000",
+      "detalle": "CUENTAS DE INGRESO"
+    },
+    {
+      "codigo": "411000000",
+      "detalle": "VENTAS"
+    },
+    {
+      "codigo": "412000000",
+      "detalle": "VTAS.PROD.FABRICAC.PROPIA"
+    },
+    {
+      "codigo": "413000000",
+      "detalle": "VTAS.MERCAD.DE TERCEROS"
+    },
+    {
+      "codigo": "415000000",
+      "detalle": "VENTAS MOSTRADOR"
+    },
+    {
+      "codigo": "420000000",
+      "detalle": "VTAS.PAPEL DE DESCARTE"
+    },
+    {
+      "codigo": "430000000",
+      "detalle": "VENTAS BS DE USO-RECUPERO SEGUROS"
+    },
+    {
+      "codigo": "440000000",
+      "detalle": "INTERESES GANADOS"
+    },
+    {
+      "codigo": "450000000",
+      "detalle": "CARGAS SOCIALES RECUPERO"
+    },
+    {
+      "codigo": "460000000",
+      "detalle": "COMISIONES GANADAS"
+    },
+    {
+      "codigo": "500000000",
+      "detalle": "FLETES COBRADOS"
+    },
+    {
+      "codigo": "510000000",
+      "detalle": "CUENTAS DE EGRESO"
+    },
+    {
+      "codigo": "510100000",
+      "detalle": "GASTOS DE FABRICACION MAQ"
+    },
+    {
+      "codigo": "510200000",
+      "detalle": "SUELDOS Y JORNALES FABR."
+    },
+    {
+      "codigo": "510300000",
+      "detalle": "TELEFONO FABRICA"
+    },
+    {
+      "codigo": "510400000",
+      "detalle": "ENERGIA ELECTRICA FABRICA"
+    },
+    {
+      "codigo": "510500000",
+      "detalle": "GAS FABRICA"
+    },
+    {
+      "codigo": "510600000",
+      "detalle": "AGUA FABRICA"
+    },
+    {
+      "codigo": "510700000",
+      "detalle": "MANTENIM. Y REPARAC.FABR."
+    },
+    {
+      "codigo": "510900000",
+      "detalle": "DISE¥OS P/IMPRESOS FABR."
+    },
+    {
+      "codigo": "511000000",
+      "detalle": "GASTOS GENERALES FABRICA"
+    },
+    {
+      "codigo": "511200000",
+      "detalle": "SEGURO DE FABRICA"
+    },
+    {
+      "codigo": "511300000",
+      "detalle": "ALQUILER FABRICA"
+    },
+    {
+      "codigo": "511400000",
+      "detalle": "TASAS MUNICIPALES"
+    },
+    {
+      "codigo": "511500000",
+      "detalle": "ARMADO DE CAJAS"
+    },
+    {
+      "codigo": "520000000",
+      "detalle": "GASTOS PARQUE INDUSTR"
+    },
+    {
+      "codigo": "520100000",
+      "detalle": "GASTOS DE ADMINISTRACION"
+    },
+    {
+      "codigo": "520200000",
+      "detalle": "COMB. Y GASTOS VEHICULOS"
+    },
+    {
+      "codigo": "520300000",
+      "detalle": "FLETES"
+    },
+    {
+      "codigo": "520400000",
+      "detalle": "GASTOS DE LIMPIEZA"
+    },
+    {
+      "codigo": "520500000",
+      "detalle": "PUBLICIDAD Y PROPAGANDA"
+    },
+    {
+      "codigo": "520700000",
+      "detalle": "ALQUILER ADMINISTRACION"
+    },
+    {
+      "codigo": "520800000",
+      "detalle": "GASTOS REPRESENTACIONES"
+    },
+    {
+      "codigo": "520900000",
+      "detalle": "GASTOS GRALES.ADMIN."
+    },
+    {
+      "codigo": "521000000",
+      "detalle": "HONORARIOS CONTABLES"
+    },
+    {
+      "codigo": "521100000",
+      "detalle": "HONORARIOS VARIOS"
+    },
+    {
+      "codigo": "521200000",
+      "detalle": "SERVICIOS DE COMPUTACION"
+    },
+    {
+      "codigo": "521300000",
+      "detalle": "SEGURO DE ADMINISTRACION"
+    },
+    {
+      "codigo": "521400000",
+      "detalle": "PATENTES Y SEGURO DE AUTOMOTORES"
+    },
+    {
+      "codigo": "521500000",
+      "detalle": "FRANQUEO"
+    },
+    {
+      "codigo": "521600000",
+      "detalle": "GASTOS BANCARIOS"
+    },
+    {
+      "codigo": "521700000",
+      "detalle": "INTERESES"
+    },
+    {
+      "codigo": "521800000",
+      "detalle": "REMUNERACION TECNICO-ADM"
+    },
+    {
+      "codigo": "521900000",
+      "detalle": "IMPUESTO ING.BRUTOS"
+    },
+    {
+      "codigo": "522000000",
+      "detalle": "IMPUESTO A LAS GANANCIAS"
+    },
+    {
+      "codigo": "522100000",
+      "detalle": "IMP.DEBITOS BANCARIOS"
+    },
+    {
+      "codigo": "522200000",
+      "detalle": "IMP.CREDITOS BANCARIOS"
+    },
+    {
+      "codigo": "522400000",
+      "detalle": "PATENTES"
+    },
+    {
+      "codigo": "522500000",
+      "detalle": "AMORTIZACIONES"
+    },
+    {
+      "codigo": "522600000",
+      "detalle": "SUELDOS Y JORNALES ADMIN."
+    },
+    {
+      "codigo": "522600001",
+      "detalle": "CARGAS SOCIALES TOTALES"
+    },
+    {
+      "codigo": "522610000",
+      "detalle": "INDEMNIZACIONES"
+    },
+    {
+      "codigo": "522700000",
+      "detalle": "ART"
+    },
+    {
+      "codigo": "522800000",
+      "detalle": "TELEFONO ADMINISTRACION"
+    },
+    {
+      "codigo": "522900000",
+      "detalle": "ENERGIA ELECTRICA ADMIN."
+    },
+    {
+      "codigo": "523000000",
+      "detalle": "GAS ADMINISTRACION"
+    },
+    {
+      "codigo": "523100000",
+      "detalle": "AGUA ADMINISTRACION"
+    },
+    {
+      "codigo": "523200000",
+      "detalle": "COMISIONES POR VENTAS"
+    },
+    {
+      "codigo": "523300000",
+      "detalle": "MANTENIM.REPARAC.VEHIC."
+    },
+    {
+      "codigo": "523400000",
+      "detalle": "MANTENIM.REPARAC.OFICINAS"
+    },
+    {
+      "codigo": "523500000",
+      "detalle": "DONACIONES"
+    },
+    {
+      "codigo": "523600000",
+      "detalle": "AGUINALDOS TOTALES"
+    },
+    {
+      "codigo": "523700000",
+      "detalle": "SERVICIO DE ALARMAS"
+    },
+    {
+      "codigo": "523800000",
+      "detalle": "MULTAS Y AJUSTES IMPOSITIVOS"
+    },
+    {
+      "codigo": "523900000",
+      "detalle": "Gastos Eventuales"
+    },
+    {
+      "codigo": "531000000",
+      "detalle": "Ajuste Facturacion Controldaor Fiscal"
+    },
+    {
+      "codigo": "532000000",
+      "detalle": "COSTO DE VENTAS"
+    },
+    {
+      "codigo": "600000000",
+      "detalle": "RECPAM"
+    },
+    {
+      "codigo": "610000000",
+      "detalle": "CUENTAS DE MOVIMIENTO"
+    },
+    {
+      "codigo": "620000000",
+      "detalle": "SUBDIARIO BANCOS"
+    },
+    {
+      "codigo": "640000000",
+      "detalle": "VENTAS CONTADO"
+    },
+    {
+      "codigo": "650000000",
+      "detalle": "COBRANZAS Y PAGOS SIN APLICAR"
+    },
+    {
+      "codigo": "900000000",
+      "detalle": "COMPRAS CONTADO"
+    }
+  ],
+  "correcciones": {
+    "112130000": "112091000"
+  }
+}
