@@ -27,6 +27,7 @@ from src import reporte as REP
 from src import ps3_micro as PS3
 from src import ventas_tango as VT
 from src import afip_jwin as AJ
+from src import rango_compras as RC
 from src.normalizar import formato_ar
 
 st.set_page_config(page_title="Herramientas del estudio", page_icon="🐣", layout="wide")
@@ -960,6 +961,132 @@ def seccion_afip():
 
 
 # --------------------------------------------------------------------------- #
+# Sección: Rango — Compras (Paradigma) → Ordenado
+# --------------------------------------------------------------------------- #
+
+def seccion_rango():
+    st.title("📦 Rango — Compras (Paradigma) → Ordenado")
+    st.caption(
+        "Subí el **Listado** de Libro IVA Compras del sistema de Rango + el **maestro "
+        "de proveedores**. La app lo reordena, le pone el **rubro contable** (por CUIT), "
+        "calcula NG+NO GR e IVA TOTAL, y detecta el **mes de proceso** del encabezado."
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        up_list = st.file_uploader("Listado de compras (Paradigma) (.xlsx)",
+                                   type=["xlsx", "xls"], key="rango_list")
+    with c2:
+        up_maestro = st.file_uploader("Maestro de proveedores - Rango (.xlsx)",
+                                      type=["xlsx"], key="rango_maestro")
+
+    with st.expander("¿Necesitás la plantilla del maestro de proveedores?"):
+        st.caption("Trae los rubros contables cargados y la hoja Proveedores vacía.")
+        st.download_button(
+            "⬇️ Descargar plantilla (rubros-proveedores)",
+            data=RC.construir_plantilla_maestro(),
+            file_name="Maestro proveedores - Rango (plantilla).xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    if up_list is None or up_maestro is None:
+        st.info("Subí el Listado del mes y el maestro de proveedores de Rango.")
+        return
+
+    list_bytes = up_list.getvalue()
+    maestro_bytes = up_maestro.getvalue()
+    try:
+        filas, desconocidos, stats, proc_det, rubros, rubro_codigo = RC.procesar(list_bytes, maestro_bytes)
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"No pude procesar: {exc}")
+        return
+
+    # Mes de proceso: detectado, con opción de corregir.
+    import datetime as _dt
+    cmes, cano = st.columns(2)
+    mes_def = proc_det.month if proc_det else _dt.date.today().month
+    ano_def = proc_det.year if proc_det else _dt.date.today().year
+    meses_nom = ["", "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+                 "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+    mes = cmes.selectbox("Mes de proceso", list(range(1, 13)),
+                         index=mes_def - 1, format_func=lambda m: meses_nom[m])
+    ano = cano.number_input("Año de proceso", 2020, 2100, ano_def, 1)
+    proceso = _dt.date(int(ano), int(mes), 1)
+
+    # Reprocesar con proveedores nuevos cargados y el proceso elegido.
+    nuevos = []
+    if desconocidos:
+        st.warning(
+            f"Hay {len(desconocidos)} proveedor(es) sin rubro. La app ya te sugiere uno "
+            "(revisá y corregí si hace falta), después podés bajar tu maestro actualizado."
+        )
+        # Sugerencia automática: aprende del maestro + palabras clave.
+        aprendido = RC.aprender_rubros(RC.leer_maestro_pares(maestro_bytes))
+        opciones = [""] + list(rubros)
+        base = pd.DataFrame([
+            {"CUIT": c, "Proveedor": n,
+             "Rubro": RC.sugerir_rubro(n, aprendido, set(rubros))}
+            for c, n in sorted(desconocidos.items())
+        ])
+        editado = st.data_editor(
+            base, hide_index=True, use_container_width=True, key="rango_editor",
+            column_config={
+                "CUIT": st.column_config.TextColumn(disabled=True),
+                "Proveedor": st.column_config.TextColumn(disabled=True),
+                "Rubro": st.column_config.SelectboxColumn("Rubro contable", options=opciones),
+            },
+        )
+        extra = {}
+        for _, row in editado.iterrows():
+            sel = str(row["Rubro"]).strip()
+            if sel:
+                cuit = RC._norm_cuit(row["CUIT"])
+                extra[cuit] = (sel, "")
+                nuevos.append((cuit, row["Proveedor"], sel, ""))
+        # Reprocesar con el mes elegido y aplicar las asignaciones manuales.
+        filas, desconocidos, stats, proc_det, rubros, rubro_codigo = RC.procesar(
+            list_bytes, maestro_bytes, proceso)
+        if extra:
+            for f in filas:
+                if f["rubro contable"] == "" and f["CUIT"] in extra:
+                    f["rubro contable"] = extra[f["CUIT"]][0]
+            stats["asignados"] = sum(1 for f in filas if f["rubro contable"])
+            stats["sin_rubro"] = len(filas) - stats["asignados"]
+    else:
+        filas, desconocidos, stats, proc_det, rubros, rubro_codigo = RC.procesar(
+            list_bytes, maestro_bytes, proceso)
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Comprobantes", stats["comprobantes"])
+    m2.metric("Con rubro", stats["asignados"])
+    m3.metric("Sin rubro", stats["sin_rubro"])
+    if stats["sin_rubro"] == 0:
+        st.success("Todos los comprobantes quedaron con su rubro contable. 🎉")
+
+    st.dataframe(pd.DataFrame(filas), use_container_width=True, hide_index=True)
+
+    st.caption("El Excel trae: Ordenado (Tabla) · iva+retenciones · TD-RUBROS-ASIENTOS "
+               "(el asiento con gastos bancarios + tarjetas a cobrar + IVA + retenciones + 'a caja') "
+               "· TARJETAS · RESUMEN.")
+    st.download_button(
+        "⬇️ Descargar libro Rango (Excel con todas las hojas)",
+        data=RC.construir_libro(filas, maestro_bytes, rubro_codigo),
+        file_name=f"ASIENTOS COMPRAS Rango {proceso:%m-%Y}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+    if nuevos:
+        st.info("Cargaste proveedores nuevos: bajá tu maestro actualizado y guardalo.")
+        st.download_button(
+            "⬇️ Maestro Rango ACTUALIZADO",
+            data=RC.construir_maestro_actualizado(maestro_bytes, nuevos),
+            file_name=up_maestro.name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+
+
+# --------------------------------------------------------------------------- #
 # Programa: menú de herramientas
 # --------------------------------------------------------------------------- #
 
@@ -970,6 +1097,7 @@ _HERRAMIENTAS = [
     ("ps3", "📒  JWIN → PS3 (MICROENV)", lambda: seccion_ps3()),
     ("ventas", "🧾  Ventas por actividad (Tango)", lambda: seccion_ventas()),
     ("afip", "📥  AFIP → JWIN (rubros)", lambda: seccion_afip()),
+    ("rango", "📦  Rango — Compras (Paradigma)", lambda: seccion_rango()),
 ]
 
 
