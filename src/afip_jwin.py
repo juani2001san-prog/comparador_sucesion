@@ -14,6 +14,7 @@ que espera JWIN; solo se agrega el rubro al final.
 
 import csv
 import io
+from datetime import date, datetime
 
 
 # --------------------------------------------------------------------------
@@ -30,9 +31,51 @@ def _decodificar(data):
 
 def _leer_csv_afip(data):
     texto = _decodificar(data)
-    filas = list(csv.reader(io.StringIO(texto), delimiter=";"))
-    # descarto filas totalmente vacías
+    # autodetectar separador (AFIP usa ';', pero por las dudas)
+    sep = ";" if texto.count(";") >= texto.count(",") else ","
+    filas = list(csv.reader(io.StringIO(texto), delimiter=sep))
     return [f for f in filas if any(str(c).strip() for c in f)]
+
+
+def _celda_texto(v):
+    """Convierte una celda de Excel al texto estilo AFIP (fecha ISO, coma decimal)."""
+    if v is None:
+        return ""
+    if isinstance(v, (datetime, date)):
+        return v.strftime("%Y-%m-%d")
+    if isinstance(v, float):
+        if v.is_integer():
+            return str(int(v))
+        return f"{v:.2f}".replace(".", ",")
+    return str(v).strip()
+
+
+def _leer_excel_afip(data):
+    """Lee el Excel de AFIP: busca la hoja con el encabezado correcto y devuelve
+    filas (encabezado + datos) como texto, ignorando una columna 'Rubro' previa."""
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
+    hoja = None
+    for nm in wb.sheetnames:
+        ws = wb[nm]
+        cab = " ".join(str(ws.cell(1, c).value or "") for c in range(1, ws.max_column + 1)).lower()
+        if "nro. doc. emisor" in cab or "fecha de emisi" in cab:
+            hoja = ws
+            break
+    if hoja is None:
+        hoja = wb.active
+    filas = []
+    for fila in hoja.iter_rows(values_only=True):
+        if any(c not in (None, "") for c in fila):
+            filas.append([_celda_texto(c) for c in fila])
+    return filas
+
+
+def _leer_entrada(data):
+    """Acepta CSV o Excel (xlsx/xls). Devuelve filas (encabezado + datos) como texto."""
+    if data[:2] == b"PK" or data[:4] == b"\xd0\xcf\x11\xe0":
+        return _leer_excel_afip(data)
+    return _leer_csv_afip(data)
 
 
 def _norm_cuit(valor):
@@ -98,10 +141,16 @@ def procesar(csv_bytes, maestro_bytes, extra=None):
     `extra`: dict CUIT->rubro con asignaciones cargadas a mano en la app
     (proveedores nuevos que todavía no están en el maestro).
     """
-    filas = _leer_csv_afip(csv_bytes)
+    filas = _leer_entrada(csv_bytes)
     if not filas:
-        raise ValueError("El CSV de AFIP está vacío.")
-    encab, datos = filas[0], filas[1:]
+        raise ValueError("El archivo de AFIP está vacío.")
+    encab, datos = list(filas[0]), [list(f) for f in filas[1:]]
+
+    # Si ya traía una columna 'Rubro' al final (ej. un Excel ya armado), la saco
+    # para volver a calcularla y no duplicarla.
+    if encab and str(encab[-1]).strip().lower() == "rubro":
+        encab = encab[:-1]
+        datos = [f[:len(encab)] for f in datos]
 
     def col(nombre):
         for i, h in enumerate(encab):

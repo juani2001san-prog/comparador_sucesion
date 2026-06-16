@@ -846,7 +846,8 @@ def seccion_afip():
 
     c1, c2 = st.columns(2)
     with c1:
-        up_csv = st.file_uploader("CSV de AFIP (.csv)", type=["csv"], key="afip_csv")
+        up_csv = st.file_uploader("Archivo de AFIP (.csv, .xlsx o .xls)",
+                                  type=["csv", "xlsx", "xls"], key="afip_csv")
     with c2:
         up_maestro = st.file_uploader("Excel maestro (Proveedores/Rubros) (.xlsx)",
                                       type=["xlsx"], key="afip_maestro")
