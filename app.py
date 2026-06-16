@@ -26,6 +26,7 @@ from src import pdf_banco as PDFB
 from src import reporte as REP
 from src import ps3_micro as PS3
 from src import ventas_tango as VT
+from src import afip_jwin as AJ
 from src.normalizar import formato_ar
 
 st.set_page_config(page_title="Herramientas del estudio", page_icon="🐣", layout="wide")
@@ -832,6 +833,83 @@ def seccion_ventas():
 
 
 # --------------------------------------------------------------------------- #
+# Sección: AFIP (Portal IVA) → JWIN con rubros
+# --------------------------------------------------------------------------- #
+
+def seccion_afip():
+    st.title("📥 AFIP (Portal IVA) → JWIN con rubros")
+    st.caption(
+        "Subí el **CSV de AFIP** (Mis Comprobantes → Recibidos) y tu **Excel maestro** "
+        "(con las hojas Proveedores y Rubros). La app le agrega la columna **Rubro** "
+        "buscando el CUIT del emisor, y te deja el archivo listo para importar a JWIN."
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        up_csv = st.file_uploader("CSV de AFIP (.csv)", type=["csv"], key="afip_csv")
+    with c2:
+        up_maestro = st.file_uploader("Excel maestro (Proveedores/Rubros) (.xlsx)",
+                                      type=["xlsx"], key="afip_maestro")
+
+    if up_csv is None or up_maestro is None:
+        st.info("Subí los dos archivos: el CSV de AFIP y tu Excel maestro de proveedores.")
+        return
+
+    try:
+        encab, filas, desconocidos, stats, rubros = AJ.procesar(
+            up_csv.getvalue(), up_maestro.getvalue())
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"No pude procesar: {exc}")
+        return
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Comprobantes", stats["comprobantes"])
+    m2.metric("Con rubro", stats["asignados"])
+    m3.metric("Sin rubro (proveedor nuevo)", stats["sin_rubro"])
+
+    if desconocidos:
+        st.warning(
+            f"Hay {len(desconocidos)} proveedor(es) que NO están en tu lista (quedan sin "
+            "rubro). Agregalos a la hoja Proveedores de tu Excel maestro y volvé a subirlo:"
+        )
+        st.dataframe(
+            pd.DataFrame([{"CUIT": c, "Denominación": d} for c, d in sorted(desconocidos.items())]),
+            use_container_width=True, hide_index=True,
+        )
+    else:
+        st.success("Todos los comprobantes quedaron con su rubro. 🎉")
+
+    with st.expander("Ver tabla (CUIT, emisor, rubro)"):
+        try:
+            i_cuit = encab.index(next(h for h in encab if "Nro. Doc. Emisor" in h))
+            i_deno = encab.index(next(h for h in encab if "Denominación Emisor" in h))
+        except StopIteration:
+            i_cuit, i_deno = 7, 8
+        vista = pd.DataFrame([
+            {"CUIT": f[i_cuit] if i_cuit < len(f) else "",
+             "Emisor": f[i_deno] if i_deno < len(f) else "",
+             "Rubro": f[-1]}
+            for f in filas
+        ])
+        st.dataframe(vista, use_container_width=True, hide_index=True)
+
+    cda, cdb = st.columns(2)
+    cda.download_button(
+        "⬇️ CSV para importar a JWIN",
+        data=AJ.construir_csv(encab, filas),
+        file_name=f"Importacion JWIN {datetime.now():%m-%Y}.csv",
+        mime="text/csv", use_container_width=True,
+    )
+    cdb.download_button(
+        "⬇️ Excel (para revisar)",
+        data=AJ.construir_excel(encab, filas, desconocidos, rubros),
+        file_name=f"Importacion AFIP JWIN {datetime.now():%m-%Y}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Programa: menú de herramientas
 # --------------------------------------------------------------------------- #
 
@@ -841,6 +919,7 @@ _HERRAMIENTAS = [
     ("pdf", "🏦  PDF de banco → Excel", lambda: seccion_pdf_banco()),
     ("ps3", "📒  JWIN → PS3 (MICROENV)", lambda: seccion_ps3()),
     ("ventas", "🧾  Ventas por actividad (Tango)", lambda: seccion_ventas()),
+    ("afip", "📥  AFIP → JWIN (rubros)", lambda: seccion_afip()),
 ]
 
 
