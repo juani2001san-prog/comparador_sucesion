@@ -92,8 +92,12 @@ def _leer_maestro(data):
 # --------------------------------------------------------------------------
 # Procesamiento
 # --------------------------------------------------------------------------
-def procesar(csv_bytes, maestro_bytes):
-    """Devuelve (encabezado, filas_con_rubro, desconocidos, stats)."""
+def procesar(csv_bytes, maestro_bytes, extra=None):
+    """Devuelve (encabezado, filas_con_rubro, desconocidos, stats, rubros).
+
+    `extra`: dict CUIT->rubro con asignaciones cargadas a mano en la app
+    (proveedores nuevos que todavía no están en el maestro).
+    """
     filas = _leer_csv_afip(csv_bytes)
     if not filas:
         raise ValueError("El CSV de AFIP está vacío.")
@@ -111,6 +115,14 @@ def procesar(csv_bytes, maestro_bytes):
         raise ValueError("No encontré la columna 'Nro. Doc. Emisor' en el CSV de AFIP.")
 
     proveedores, rubros = _leer_maestro(maestro_bytes)
+    # Sumar las asignaciones cargadas a mano (tienen prioridad).
+    for cuit, rub in (extra or {}).items():
+        c = _norm_cuit(cuit)
+        if c and rub not in (None, ""):
+            try:
+                proveedores[c] = int(rub)
+            except (TypeError, ValueError):
+                proveedores[c] = rub
 
     salida = []
     desconocidos = {}
@@ -139,6 +151,84 @@ def procesar(csv_bytes, maestro_bytes):
 # --------------------------------------------------------------------------
 # Salidas
 # --------------------------------------------------------------------------
+# Catálogo de rubros estándar (JWIN). Sirve para armar una plantilla nueva.
+RUBROS_ESTANDAR = [
+    (1, "Movilidad y Viaticos"), (2, "Fletes"), (3, "Honorarios y Aranceles"),
+    (4, "Repuestos y reparaciones"), (5, "Combustibles"), (6, "Internet"),
+    (7, "Obra Social"), (8, "Semillas e insumos"), (9, "Telefonia"),
+    (10, "Agroquimicos"), (11, "Gastos Varios"), (12, "Hacienda"),
+    (13, "Gastos 10.5"), (14, "Laboreos"), (15, "Luz, gas y agua"),
+    (16, "Alquileres"), (17, "Combustibles 10.5"),
+]
+
+
+def construir_plantilla_maestro(rubros=None):
+    """Devuelve un Excel maestro vacío: hoja Rubros (catálogo) + hoja Proveedores
+    (solo encabezados) + Instrucciones. Para empezar de cero un maestro."""
+    import openpyxl
+    from openpyxl.styles import Font
+
+    rubros = rubros or RUBROS_ESTANDAR
+    bold = Font(bold=True)
+    wb = openpyxl.Workbook()
+
+    wi = wb.active
+    wi.title = "Instrucciones"
+    txt = [
+        "EXCEL MAESTRO DE PROVEEDORES (para AFIP -> JWIN)",
+        "",
+        "Hoja 'Rubros': catálogo de rubros (código 1..17). Ya viene cargado.",
+        "Hoja 'Proveedores': cargá acá cada proveedor con su CUIT y el código de rubro.",
+        "   - CUIT: los 11 dígitos, sin guiones.",
+        "   - Rubro: el número del catálogo (mirá la hoja Rubros).",
+        "",
+        "Tip: en la herramienta AFIP -> JWIN, cuando aparezca un proveedor nuevo,",
+        "lo cargás ahí mismo y la app te devuelve este maestro ya actualizado.",
+    ]
+    for i, t in enumerate(txt, start=1):
+        wi.cell(i, 1, t)
+
+    wr = wb.create_sheet("Rubros")
+    wr.cell(1, 1, "Código").font = bold
+    wr.cell(1, 2, "Descripción").font = bold
+    for i, (cod, desc) in enumerate(rubros, start=2):
+        wr.cell(i, 1, cod)
+        wr.cell(i, 2, desc)
+
+    wp = wb.create_sheet("Proveedores")
+    for j, t in enumerate(["CUIT", "Razón Social", "Rubro", "Descripción Rubro"], start=1):
+        wp.cell(1, j, t).font = bold
+    wp.column_dimensions["A"].width = 16
+    wp.column_dimensions["B"].width = 50
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def construir_maestro_actualizado(maestro_bytes, nuevos):
+    """Devuelve el Excel maestro con los proveedores nuevos AGREGADOS al final
+    de la hoja Proveedores. `nuevos` = lista de (cuit, denominacion, rubro, desc)."""
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(maestro_bytes))
+    hoja = next((h for h in wb.sheetnames if "proveedor" in h.lower()), None)
+    if hoja is None:
+        hoja = "Proveedores"
+        ws = wb.create_sheet(hoja)
+        ws.append(["CUIT", "Razón Social", "Rubro", "Descripción Rubro"])
+    ws = wb[hoja]
+    fila = ws.max_row + 1
+    for cuit, deno, rubro, desc in nuevos:
+        ws.cell(fila, 1, str(cuit))
+        ws.cell(fila, 2, deno)
+        ws.cell(fila, 3, rubro)
+        ws.cell(fila, 4, desc)
+        fila += 1
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def construir_csv(encab, filas):
     """CSV UTF-8 con separador ';' (mismo formato que AFIP) + columna Rubro."""
     buf = io.StringIO()

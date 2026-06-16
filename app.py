@@ -851,32 +851,67 @@ def seccion_afip():
         up_maestro = st.file_uploader("Excel maestro (Proveedores/Rubros) (.xlsx)",
                                       type=["xlsx"], key="afip_maestro")
 
+    with st.expander("¿No tenés el Excel maestro? Descargá una plantilla para empezar"):
+        st.caption(
+            "Viene con el catálogo de Rubros cargado y la hoja Proveedores vacía. "
+            "Tip: subí esta plantilla + el CSV de AFIP y la app te va a listar TODOS los "
+            "proveedores para que les asignes el rubro; después bajás el maestro completo."
+        )
+        st.download_button(
+            "⬇️ Descargar plantilla de Excel maestro",
+            data=AJ.construir_plantilla_maestro(),
+            file_name="Maestro proveedores.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
     if up_csv is None or up_maestro is None:
         st.info("Subí los dos archivos: el CSV de AFIP y tu Excel maestro de proveedores.")
         return
 
+    csv_bytes = up_csv.getvalue()
+    maestro_bytes = up_maestro.getvalue()
     try:
-        encab, filas, desconocidos, stats, rubros = AJ.procesar(
-            up_csv.getvalue(), up_maestro.getvalue())
+        encab, filas, desconocidos, stats, rubros = AJ.procesar(csv_bytes, maestro_bytes)
     except Exception as exc:  # noqa: BLE001
         st.error(f"No pude procesar: {exc}")
         return
 
+    # Si hay proveedores nuevos, dejar cargar el rubro ahí mismo.
+    nuevos = []          # (cuit, deno, rubro, desc) para actualizar el maestro
+    if desconocidos:
+        st.warning(
+            f"Hay {len(desconocidos)} proveedor(es) que NO están en tu lista. "
+            "Asignales el rubro acá abajo (se aplica al toque y podés bajar tu maestro actualizado)."
+        )
+        opciones = [""] + [f"{c} - {d}" for c, d in sorted(rubros.items())]
+        base = pd.DataFrame([{"CUIT": c, "Denominación": d, "Rubro": ""}
+                             for c, d in sorted(desconocidos.items())])
+        editado = st.data_editor(
+            base, hide_index=True, use_container_width=True, key="afip_editor",
+            column_config={
+                "CUIT": st.column_config.TextColumn(disabled=True),
+                "Denominación": st.column_config.TextColumn(disabled=True),
+                "Rubro": st.column_config.SelectboxColumn("Rubro", options=opciones),
+            },
+        )
+        extra = {}
+        for _, row in editado.iterrows():
+            sel = str(row["Rubro"]).strip()
+            if sel:
+                cod = int(sel.split(" - ")[0])
+                cuit = AJ._norm_cuit(row["CUIT"])
+                extra[cuit] = cod
+                nuevos.append((cuit, row["Denominación"], cod, rubros.get(cod, "")))
+        if extra:
+            # Reprocesar con los rubros recién cargados.
+            encab, filas, desconocidos, stats, rubros = AJ.procesar(csv_bytes, maestro_bytes, extra)
+
     m1, m2, m3 = st.columns(3)
     m1.metric("Comprobantes", stats["comprobantes"])
     m2.metric("Con rubro", stats["asignados"])
-    m3.metric("Sin rubro (proveedor nuevo)", stats["sin_rubro"])
+    m3.metric("Sin rubro", stats["sin_rubro"])
 
-    if desconocidos:
-        st.warning(
-            f"Hay {len(desconocidos)} proveedor(es) que NO están en tu lista (quedan sin "
-            "rubro). Agregalos a la hoja Proveedores de tu Excel maestro y volvé a subirlo:"
-        )
-        st.dataframe(
-            pd.DataFrame([{"CUIT": c, "Denominación": d} for c, d in sorted(desconocidos.items())]),
-            use_container_width=True, hide_index=True,
-        )
-    else:
+    if stats["sin_rubro"] == 0:
         st.success("Todos los comprobantes quedaron con su rubro. 🎉")
 
     with st.expander("Ver tabla (CUIT, emisor, rubro)"):
@@ -907,6 +942,20 @@ def seccion_afip():
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
     )
+
+    if nuevos:
+        st.divider()
+        st.info(
+            "Cargaste proveedores nuevos. Bajá tu **maestro actualizado** (les quedan "
+            "agregados a la hoja Proveedores) y guardalo para usarlo el mes que viene."
+        )
+        st.download_button(
+            "⬇️ Excel maestro ACTUALIZADO (con los proveedores nuevos)",
+            data=AJ.construir_maestro_actualizado(maestro_bytes, nuevos),
+            file_name=up_maestro.name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
 
 # --------------------------------------------------------------------------- #
