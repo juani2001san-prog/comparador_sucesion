@@ -365,6 +365,79 @@ def leer_ordenado(data):
     return filas
 
 
+def leer_control(data):
+    """Lee la hoja 'Comprobante' (totales oficiales de Paradigma) y devuelve la
+    fila 'Totales:' como dict por concepto. {} si no la encuentra."""
+    wb = _abrir(data)
+    hoja = next((h for h in wb.sheetnames if h.strip().lower() == "comprobante"), None)
+    if hoja is None:
+        return {}
+    ws = wb[hoja]
+    hr = None
+    for r in range(1, ws.max_row + 1):
+        fila = " ".join(str(ws.cell(r, c).value or "").lower() for c in range(1, ws.max_column + 1))
+        if "neto gravado" in fila and "total" in fila:
+            hr = r
+            break
+    if hr is None:
+        return {}
+    hdr = [str(ws.cell(hr, c).value or "").strip().lower() for c in range(1, ws.max_column + 1)]
+
+    def col(*claves):
+        for i, h in enumerate(hdr):
+            if any(k in h for k in claves):
+                return i + 1
+        return None
+
+    cols = {
+        "neto21": col("neto gravado 21", "neto gravado"),
+        "neto105": col("diferencial"),                 # 'Diferencial' (neto 10,5%)
+        "nograv": col("no gravado"),
+        "iva21": col("iva 21"),
+        "ivadif": col("iva diferencial", "iva dif"),
+        "percret": col("percep", "retenc"),
+        "total": col("total"),
+    }
+    tot_r = None
+    for r in range(hr + 1, ws.max_row + 1):
+        if any("totales" in str(ws.cell(r, c).value or "").lower() for c in range(1, 4)):
+            tot_r = r
+            break
+    if tot_r is None:
+        return {}
+    return {k: (_num(ws.cell(tot_r, c).value) if c else 0.0) for k, c in cols.items()}
+
+
+def control_totales(filas, control):
+    """Compara los totales procesados contra los de la hoja 'Comprobante'.
+    Devuelve lista de dicts (concepto, sistema, procesado, diferencia) y si cuadra."""
+    def s(clave):
+        return round(sum(f[clave] for f in filas), 2)
+
+    proc = {
+        "neto21": s("NG 21%"), "neto105": s("NG 10,5%"), "nograv": s("no Gravados"),
+        "iva21": s("21 %"), "ivadif": s("iva dif"),
+        "percret": round(s("Ret y Ret. IVA") + s("Ret y Ret. Ing. Brutos") + s("Ret y Ret. Ganancias"), 2),
+        "total": s("Facturado"),
+    }
+    nombres = {
+        "neto21": "Neto Gravado 21%", "neto105": "Diferencial (10,5%)",
+        "nograv": "Neto No Gravado", "iva21": "IVA 21%", "ivadif": "IVA Diferencial",
+        "percret": "Percepciones y retenciones", "total": "TOTAL",
+    }
+    detalle = []
+    cuadra = True
+    for k in ["neto21", "neto105", "nograv", "iva21", "ivadif", "percret", "total"]:
+        sis = round(float(control.get(k, 0) or 0), 2)
+        pr = proc[k]
+        dif = round(pr - sis, 2)
+        if abs(dif) >= 0.5:
+            cuadra = False
+        detalle.append({"Concepto": nombres[k], "Sistema (Paradigma)": sis,
+                        "Procesado": pr, "Diferencia": dif})
+    return detalle, cuadra
+
+
 def construir_libro(filas, maestro_bytes=None, rubro_codigo=None):
     """Arma el libro de un mes: Ordenado (Tabla de Excel) + iva+retenciones +
     TD-RUBROS-ASIENTOS (el asiento completo: rubros + gastos bancarios + tarjetas

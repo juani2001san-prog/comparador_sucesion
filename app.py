@@ -1063,6 +1063,25 @@ def seccion_rango():
     if stats["sin_rubro"] == 0:
         st.success("Todos los comprobantes quedaron con su rubro contable. 🎉")
 
+    # --- Control: lo procesado vs los totales de la hoja 'Comprobante' de Paradigma ---
+    control_sis = RC.leer_control(list_bytes)
+    if control_sis:
+        detalle, cuadra = RC.control_totales(filas, control_sis)
+        st.divider()
+        st.subheader("✅ Control contra Paradigma (hoja Comprobante)")
+        if cuadra:
+            st.success("Cuadra: los totales procesados coinciden con los del sistema. 👌")
+        else:
+            st.error("¡No cuadra! Hay diferencias contra los totales de Paradigma. Revisá:")
+        st.dataframe(
+            pd.DataFrame(detalle), use_container_width=True, hide_index=True,
+            column_config={c: st.column_config.NumberColumn(format="%.2f")
+                           for c in ["Sistema (Paradigma)", "Procesado", "Diferencia"]},
+        )
+    else:
+        st.caption("ℹ️ No encontré la hoja 'Comprobante' en el Listado, así que no pude "
+                   "hacer el control automático de totales.")
+
     st.dataframe(pd.DataFrame(filas), use_container_width=True, hide_index=True)
 
     st.caption("El Excel trae: Ordenado (Tabla) · iva+retenciones · TD-RUBROS-ASIENTOS "
