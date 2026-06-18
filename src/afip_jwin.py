@@ -152,16 +152,19 @@ def procesar(csv_bytes, maestro_bytes, extra=None):
         encab = encab[:-1]
         datos = [f[:len(encab)] for f in datos]
 
-    def col(nombre):
-        for i, h in enumerate(encab):
-            if nombre.lower() in str(h).strip().lower():
-                return i
+    def col(*nombres):
+        for nm in nombres:
+            for i, h in enumerate(encab):
+                if nm.lower() in str(h).strip().lower():
+                    return i
         return None
 
-    i_cuit = col("Nro. Doc. Emisor")
-    i_deno = col("Denominación Emisor")
+    # AFIP tiene dos formatos: viejo ('Emisor') y nuevo 'montos en pesos' ('Vendedor').
+    i_cuit = col("Nro. Doc. Emisor", "Nro. Doc. Vendedor", "Nro. Doc")
+    i_deno = col("Denominación Emisor", "Denominación Vendedor", "Denominación")
     if i_cuit is None:
-        raise ValueError("No encontré la columna 'Nro. Doc. Emisor' en el CSV de AFIP.")
+        raise ValueError("No encontré la columna del CUIT del proveedor "
+                         "('Nro. Doc. Emisor' o 'Nro. Doc. Vendedor') en el CSV de AFIP.")
 
     proveedores, rubros = _leer_maestro(maestro_bytes)
     # Sumar las asignaciones cargadas a mano (tienen prioridad).
