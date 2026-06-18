@@ -1214,16 +1214,52 @@ def seccion_monotributo():
 # Programa: menú de herramientas
 # --------------------------------------------------------------------------- #
 
-# Herramientas del programa: (clave, etiqueta del menú, función).
+# Registro de herramientas: clave, emoji, título, grupo, descripción y función.
 _HERRAMIENTAS = [
-    ("comparador", "🧮  Comparador", lambda: seccion_comparador()),
-    ("pdf", "🏦  PDF de banco → Excel", lambda: seccion_pdf_banco()),
-    ("ps3", "📒  JWIN → PS3 (MICROENV)", lambda: seccion_ps3()),
-    ("ventas", "🧾  Ventas por actividad (Tango)", lambda: seccion_ventas()),
-    ("afip", "📥  AFIP → JWIN (rubros)", lambda: seccion_afip()),
-    ("rango", "📦  Rango — Compras (Paradigma)", lambda: seccion_rango()),
-    ("monotributo", "📊  Monotributo — Recategorización", lambda: seccion_monotributo()),
+    {"clave": "comparador", "emoji": "🧮", "titulo": "Comparador",
+     "grupo": "Controles", "render": lambda: seccion_comparador(),
+     "desc": "Contabilidad vs caja/planilla: cruce movimiento a movimiento por importe y fecha."},
+    {"clave": "monotributo", "emoji": "📊", "titulo": "Monotributo — Recategorización",
+     "grupo": "Impuestos", "render": lambda: seccion_monotributo(),
+     "desc": "Calcula categoría, margen para mantenerse y cuándo se pasa, según la facturación."},
+    {"clave": "ventas", "emoji": "🧾", "titulo": "Ventas por actividad (Tango)",
+     "grupo": "Impuestos", "render": lambda: seccion_ventas(),
+     "desc": "Neto e IVA por actividad y categoría (ventas − NC), para DJ de IVA y Convenio."},
+    {"clave": "afip", "emoji": "📥", "titulo": "AFIP → JWIN (rubros)",
+     "grupo": "Cargas a sistemas", "render": lambda: seccion_afip(),
+     "desc": "Le agrega el rubro por CUIT al CSV/Excel de AFIP, listo para importar a JWIN."},
+    {"clave": "rango", "emoji": "📦", "titulo": "Rango — Compras (Paradigma)",
+     "grupo": "Cargas a sistemas", "render": lambda: seccion_rango(),
+     "desc": "Arma el asiento de compras del mes con rubros, retenciones y control contra Paradigma."},
+    {"clave": "ps3", "emoji": "📒", "titulo": "JWIN → PS3 (MICROENV)",
+     "grupo": "Cargas a sistemas", "render": lambda: seccion_ps3(),
+     "desc": "Convierte los JWIN del mes en los archivos .ps3 y el Excel del sistema contable."},
+    {"clave": "pdf", "emoji": "🏦", "titulo": "PDF de banco → Excel",
+     "grupo": "Utilidades", "render": lambda: seccion_pdf_banco(),
+     "desc": "Convierte un extracto bancario en PDF a una tabla de Excel."},
 ]
+
+
+def seccion_inicio():
+    st.title("🌿 Herramientas del estudio")
+    st.caption("Elegí una herramienta para empezar.")
+    st.write("")
+    grupos = {}
+    for h in _HERRAMIENTAS:
+        grupos.setdefault(h["grupo"], []).append(h)
+
+    for grupo, items in grupos.items():
+        st.subheader(grupo)
+        cols = st.columns(3)
+        for i, h in enumerate(items):
+            with cols[i % 3]:
+                with st.container(border=True):
+                    st.markdown(f"### {h['emoji']} {h['titulo']}")
+                    st.caption(h["desc"])
+                    if st.button("Abrir →", key=f"card_{h['clave']}", use_container_width=True):
+                        st.session_state["seccion"] = h["clave"]
+                        st.rerun()
+        st.write("")
 
 
 def _password_ok() -> bool:
@@ -1260,27 +1296,35 @@ def main():
         return
 
     if "seccion" not in st.session_state:
-        st.session_state["seccion"] = _HERRAMIENTAS[0][0]
+        st.session_state["seccion"] = "inicio"
 
     with st.sidebar:
-        st.markdown("### 🐣 Herramientas del estudio")
-        st.caption("Elegí una herramienta")
-        for clave, etiqueta, _ in _HERRAMIENTAS:
-            activo = st.session_state["seccion"] == clave
-            if st.button(
-                etiqueta, key=f"nav_{clave}", use_container_width=True,
-                type="primary" if activo else "secondary",
-            ):
-                st.session_state["seccion"] = clave
+        st.markdown("### 🌿 Herramientas del estudio")
+        if st.button("🏠  Inicio", key="nav_inicio", use_container_width=True,
+                     type="primary" if st.session_state["seccion"] == "inicio" else "secondary"):
+            st.session_state["seccion"] = "inicio"
+            st.rerun()
+        grupo_actual = None
+        for h in _HERRAMIENTAS:
+            if h["grupo"] != grupo_actual:
+                grupo_actual = h["grupo"]
+                st.caption(grupo_actual)
+            activo = st.session_state["seccion"] == h["clave"]
+            if st.button(f"{h['emoji']}  {h['titulo']}", key=f"nav_{h['clave']}",
+                         use_container_width=True, type="primary" if activo else "secondary"):
+                st.session_state["seccion"] = h["clave"]
                 st.rerun()
         st.divider()
-        st.caption("Programa de uso diario.\nSe irán agregando más herramientas.")
+        st.caption("Programa del estudio · uso diario.")
 
     # Renderiza la sección activa.
-    for clave, _, render in _HERRAMIENTAS:
-        if st.session_state["seccion"] == clave:
-            render()
-            break
+    if st.session_state["seccion"] == "inicio":
+        seccion_inicio()
+    else:
+        for h in _HERRAMIENTAS:
+            if st.session_state["seccion"] == h["clave"]:
+                h["render"]()
+                break
 
 
 if __name__ == "__main__":
