@@ -78,6 +78,58 @@ def _leer_entrada(data):
     return _leer_csv_afip(data)
 
 
+# Layout canónico que espera el importador de JWIN (formato AFIP "viejo", 30 cols).
+_CANON = [
+    "Fecha de Emisión", "Tipo de Comprobante", "Punto de Venta", "Número Desde",
+    "Número Hasta", "Cód. Autorización", "Tipo Doc. Emisor", "Nro. Doc. Emisor",
+    "Denominación Emisor", "Tipo Doc. Receptor", "Nro. Doc. Receptor", "Tipo Cambio",
+    "Moneda", "Imp. Neto Gravado IVA 0%", "IVA 2,5%", "Imp. Neto Gravado IVA 2,5%",
+    "IVA 5%", "Imp. Neto Gravado IVA 5%", "IVA 10,5%", "Imp. Neto Gravado IVA 10,5%",
+    "IVA 21%", "Imp. Neto Gravado IVA 21%", "IVA 27%", "Imp. Neto Gravado IVA 27%",
+    "Imp. Neto Gravado Total", "Imp. Neto No Gravado", "Imp. Op. Exentas",
+    "Otros Tributos", "Total IVA", "Imp. Total",
+]
+# Nombres equivalentes en el formato AFIP "nuevo" (montos en pesos / Vendedor).
+_ALT = {
+    "Número Desde": ["Número de Comprobante"], "Número Hasta": ["Número de Comprobante"],
+    "Tipo Doc. Emisor": ["Tipo Doc. Vendedor"], "Nro. Doc. Emisor": ["Nro. Doc. Vendedor"],
+    "Denominación Emisor": ["Denominación Vendedor"], "Tipo Cambio": ["Tipo de Cambio"],
+    "Moneda": ["Moneda Original"], "Imp. Neto Gravado IVA 0%": ["Neto Gravado IVA 0%"],
+    "IVA 2,5%": ["Importe IVA 2,5%"], "Imp. Neto Gravado IVA 2,5%": ["Neto Gravado IVA 2,5%"],
+    "IVA 5%": ["Importe IVA 5%"], "Imp. Neto Gravado IVA 5%": ["Neto Gravado IVA 5%"],
+    "IVA 10,5%": ["Importe IVA 10,5%"], "Imp. Neto Gravado IVA 10,5%": ["Neto Gravado IVA 10,5%"],
+    "IVA 21%": ["Importe IVA 21%"], "Imp. Neto Gravado IVA 21%": ["Neto Gravado IVA 21%"],
+    "IVA 27%": ["Importe IVA 27%"], "Imp. Neto Gravado IVA 27%": ["Neto Gravado IVA 27%"],
+    "Imp. Neto Gravado Total": ["Total Neto Gravado"], "Imp. Neto No Gravado": ["Importe No Gravado"],
+    "Imp. Op. Exentas": ["Importe Exento"],
+    "Otros Tributos": ["Importe de Percepciones de Ingresos Brutos"],
+    "Imp. Total": ["Importe Total"],
+}
+
+
+def _norm_h(s):
+    return " ".join(str(s).strip().lower().split())
+
+
+def _a_layout_jwin(encab, datos):
+    """Reordena cualquier formato de AFIP al layout canónico que espera JWIN.
+    Para el formato viejo es identidad; el nuevo lo remapea por significado."""
+    idx = {}
+    for i, h in enumerate(encab):
+        idx.setdefault(_norm_h(h), i)
+
+    def buscar(canon):
+        for c in [canon] + _ALT.get(canon, []):
+            j = idx.get(_norm_h(c))
+            if j is not None:
+                return j
+        return None
+
+    cols = [buscar(c) for c in _CANON]
+    nuevos = [[(f[j] if (j is not None and j < len(f)) else "") for j in cols] for f in datos]
+    return list(_CANON), nuevos
+
+
 def _norm_cuit(valor):
     if valor is None:
         return ""
@@ -146,12 +198,12 @@ def procesar(csv_bytes, maestro_bytes, extra=None):
         raise ValueError("El archivo de AFIP está vacío.")
     encab, datos = list(filas[0]), [list(f) for f in filas[1:]]
 
-    # Si ya traía una columna 'Rubro' al final (ej. un Excel ya armado), la saco
-    # para volver a calcularla y no duplicarla.
+    # Si ya traía una columna 'Rubro' al final (ej. un Excel ya armado), la saco.
     if encab and str(encab[-1]).strip().lower() == "rubro":
         encab = encab[:-1]
         datos = [f[:len(encab)] for f in datos]
 
+    # Dejamos el archivo tal cual viene de AFIP y solo agregamos el Rubro al final.
     def col(*nombres):
         for nm in nombres:
             for i, h in enumerate(encab):
@@ -159,12 +211,12 @@ def procesar(csv_bytes, maestro_bytes, extra=None):
                     return i
         return None
 
-    # AFIP tiene dos formatos: viejo ('Emisor') y nuevo 'montos en pesos' ('Vendedor').
+    # Acepta el formato viejo ('Emisor') y el nuevo 'montos en pesos' ('Vendedor').
     i_cuit = col("Nro. Doc. Emisor", "Nro. Doc. Vendedor", "Nro. Doc")
     i_deno = col("Denominación Emisor", "Denominación Vendedor", "Denominación")
     if i_cuit is None:
         raise ValueError("No encontré la columna del CUIT del proveedor "
-                         "('Nro. Doc. Emisor' o 'Nro. Doc. Vendedor') en el CSV de AFIP.")
+                         "('Nro. Doc. Emisor' o 'Nro. Doc. Vendedor') en el archivo de AFIP.")
 
     proveedores, rubros = _leer_maestro(maestro_bytes)
     # Sumar las asignaciones cargadas a mano (tienen prioridad).
