@@ -28,6 +28,7 @@ from src import ps3_micro as PS3
 from src import ventas_tango as VT
 from src import afip_jwin as AJ
 from src import rango_compras as RC
+from src import monotributo as MT
 from src.normalizar import formato_ar
 
 st.set_page_config(page_title="Herramientas del estudio", page_icon="🐣", layout="wide")
@@ -1106,6 +1107,82 @@ def seccion_rango():
 
 
 # --------------------------------------------------------------------------- #
+# Sección: Monotributo — recategorización
+# --------------------------------------------------------------------------- #
+
+def seccion_monotributo():
+    st.title("📊 Monotributo — Recategorización")
+    st.caption(
+        "Subí la planilla de facturación del cliente. La app calcula el acumulado de "
+        "los últimos 12 meses, la categoría que le corresponde, cuánto puede facturar "
+        "para mantenerse y cuánto le falta para pasarse."
+    )
+
+    escala = MT.cargar_escala()
+    with st.expander(f"Escala vigente ({escala.get('vigencia','')}) — actualizable"):
+        st.caption("Para actualizar cada semestre, reemplazá src/escala_monotributo.json con los topes vigentes de ARCA.")
+        st.dataframe(pd.DataFrame(escala["servicios"]).rename(
+            columns={"cat": "Cat.", "tope": "Tope ingresos 12m", "cuota": "Cuota mensual"}),
+            use_container_width=True, hide_index=True,
+            column_config={"Tope ingresos 12m": st.column_config.NumberColumn(format="%.2f"),
+                           "Cuota mensual": st.column_config.NumberColumn(format="%.2f")})
+
+    archivo = st.file_uploader("Planilla de facturación (.xlsx)", type=["xlsx"], key="mt_file")
+    if archivo is None:
+        st.info("Subí la planilla de facturación del monotributista.")
+        return
+
+    try:
+        serie = MT.leer_facturacion(archivo.getvalue())
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"No pude leer la planilla: {exc}")
+        return
+    if not serie:
+        st.warning("No encontré la facturación mensual (esperaba una hoja 'ACUMULADOS' "
+                   "o hojas mensuales con una columna 'MONTO').")
+        return
+
+    meses = MT.meses_disponibles(serie)
+    ult_a, ult_m = meses[-1]
+    c1, c2, c3 = st.columns(3)
+    actividad = c1.selectbox("Actividad", ["servicios", "bienes"],
+                             format_func=lambda a: "Servicios / locaciones" if a == "servicios"
+                             else "Venta de cosas muebles")
+    mes = c2.selectbox("Mes hasta (cierre del período de 12 meses)", list(range(1, 13)),
+                       index=ult_m - 1, format_func=lambda m: MT._MESNOM[m])
+    anio = c3.number_input("Año", 2020, 2100, ult_a, 1)
+
+    acumulado, detalle = MT.acumulado_12m(serie, int(anio), int(mes))
+    a = MT.analizar(acumulado, actividad, escala)
+
+    st.divider()
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Facturado últimos 12 meses", formato_ar(acumulado))
+    m2.metric("Categoría que le corresponde", a["categoria"])
+    m3.metric("Cuota mensual", formato_ar(a["cuota"]) if a["cuota"] else "—")
+
+    if a["categoria"] == "EXCLUIDO":
+        st.error(f"⚠️ Supera el tope máximo (categoría K) por {formato_ar(a['excede_por'])}. "
+                 "Queda EXCLUIDO del monotributo → pasa al Régimen General.")
+    else:
+        st.success(
+            f"✅ Categoría **{a['categoria']}**. Para **mantenerse** puede facturar hasta "
+            f"**{formato_ar(a['margen_mantenerse'])}** más (en los próximos meses del período). "
+            f"Si factura más que eso, **pasa a {a['siguiente']}**."
+        )
+        cc1, cc2 = st.columns(2)
+        cc1.metric(f"Margen para mantenerse en {a['categoria']}", formato_ar(a["margen_mantenerse"]))
+        cc2.metric(f"Si supera eso → pasa a {a['siguiente']}",
+                   f"tope {formato_ar(a['tope_siguiente'])}" if a["tope_siguiente"] else "EXCLUIDO")
+
+    with st.expander("Ver los 12 meses considerados"):
+        st.dataframe(
+            pd.DataFrame([{"Período": f"{MT._MESNOM[m]} {y}", "Facturado": v} for y, m, v in detalle]),
+            use_container_width=True, hide_index=True,
+            column_config={"Facturado": st.column_config.NumberColumn(format="%.2f")})
+
+
+# --------------------------------------------------------------------------- #
 # Programa: menú de herramientas
 # --------------------------------------------------------------------------- #
 
@@ -1117,6 +1194,7 @@ _HERRAMIENTAS = [
     ("ventas", "🧾  Ventas por actividad (Tango)", lambda: seccion_ventas()),
     ("afip", "📥  AFIP → JWIN (rubros)", lambda: seccion_afip()),
     ("rango", "📦  Rango — Compras (Paradigma)", lambda: seccion_rango()),
+    ("monotributo", "📊  Monotributo — Recategorización", lambda: seccion_monotributo()),
 ]
 
 

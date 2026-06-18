@@ -1,0 +1,30 @@
+{
+  "vigencia": "Desde febrero 2026",
+  "nota": "Topes de INGRESOS BRUTOS acumulados (12 meses) por categoría y la cuota mensual total. Actualizá estos números cada semestre con la escala vigente de ARCA. 'servicios' = locaciones y prestaciones de servicios; 'bienes' = venta de cosas muebles. Los topes de ingresos hoy son iguales para ambas actividades; verificá las cuotas de 'bienes'.",
+  "servicios": [
+    {"cat": "A", "tope": 10277988.13, "cuota": 14625.46},
+    {"cat": "B", "tope": 15058447.71, "cuota": 25102.88},
+    {"cat": "C", "tope": 21113696.52, "cuota": 40656.17},
+    {"cat": "D", "tope": 26212853.42, "cuota": 60315.79},
+    {"cat": "E", "tope": 30833964.37, "cuota": 93889.60},
+    {"cat": "F", "tope": 38642048.36, "cuota": 132500.13},
+    {"cat": "G", "tope": 46211109.37, "cuota": 210949.76},
+    {"cat": "H", "tope": 70113407.33, "cuota": 503767.04},
+    {"cat": "I", "tope": 78479211.62, "cuota": 893495.35},
+    {"cat": "J", "tope": 89872640.30, "cuota": 1095160.42},
+    {"cat": "K", "tope": 108357084.05, "cuota": 1666565.33}
+  ],
+  "bienes": [
+    {"cat": "A", "tope": 10277988.13, "cuota": 14625.46},
+    {"cat": "B", "tope": 15058447.71, "cuota": 25102.88},
+    {"cat": "C", "tope": 21113696.52, "cuota": 40656.17},
+    {"cat": "D", "tope": 26212853.42, "cuota": 60315.79},
+    {"cat": "E", "tope": 30833964.37, "cuota": 93889.60},
+    {"cat": "F", "tope": 38642048.36, "cuota": 132500.13},
+    {"cat": "G", "tope": 46211109.37, "cuota": 210949.76},
+    {"cat": "H", "tope": 70113407.33, "cuota": 503767.04},
+    {"cat": "I", "tope": 78479211.62, "cuota": 893495.35},
+    {"cat": "J", "tope": 89872640.30, "cuota": 1095160.42},
+    {"cat": "K", "tope": 108357084.05, "cuota": 1666565.33}
+  ]
+}
