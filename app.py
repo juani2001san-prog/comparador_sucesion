@@ -1162,8 +1162,20 @@ def seccion_monotributo():
                                 index=ini_m - 1, format_func=lambda m: MT._MESNOM[m], key="mt_ini_mes")
         anio_ini = ccj.number_input("Año de inicio", 2020, 2100, ini_a, 1, key="mt_ini_anio")
         real, n_meses, detalle = MT.acumulado_rango(serie, int(anio_ini), int(mes_ini), int(anio), int(mes))
+        if n_meses < 6:
+            st.warning(
+                f"Lleva **{n_meses}** mes(es) de actividad (menos de 6) → **NO corresponde "
+                f"recategorizar** todavía. Mantiene la categoría con la que se inscribió. "
+                f"(Facturado hasta ahora: {formato_ar(real)}.)"
+            )
+            with st.expander("Ver los meses considerados"):
+                st.dataframe(
+                    pd.DataFrame([{"Período": f"{MT._MESNOM[m]} {y}", "Facturado": v} for y, m, v in detalle]),
+                    use_container_width=True, hide_index=True,
+                    column_config={"Facturado": st.column_config.NumberColumn(format="%.2f")})
+            return
         acumulado = MT.anualizar(real, n_meses)
-        st.info(f"Anualización: facturó **{formato_ar(real)}** en **{n_meses}** mes(es) → "
+        st.info(f"Anualización ({n_meses} meses, supera los 6): facturó **{formato_ar(real)}** → "
                 f"proyectado a 12 meses = **{formato_ar(acumulado)}**.")
     else:
         acumulado, detalle = MT.acumulado_12m(serie, int(anio), int(mes))
