@@ -1143,21 +1143,39 @@ def seccion_monotributo():
         return
 
     meses = MT.meses_disponibles(serie)
+    ini_a, ini_m = meses[0]
     ult_a, ult_m = meses[-1]
     c1, c2, c3 = st.columns(3)
     actividad = c1.selectbox("Actividad", ["servicios", "bienes"],
                              format_func=lambda a: "Servicios / locaciones" if a == "servicios"
                              else "Venta de cosas muebles")
-    mes = c2.selectbox("Mes hasta (cierre del período de 12 meses)", list(range(1, 13)),
+    mes = c2.selectbox("Mes hasta (cierre del período)", list(range(1, 13)),
                        index=ult_m - 1, format_func=lambda m: MT._MESNOM[m])
     anio = c3.number_input("Año", 2020, 2100, ult_a, 1)
 
-    acumulado, detalle = MT.acumulado_12m(serie, int(anio), int(mes))
+    nuevo = st.checkbox(
+        "El cliente está inscripto hace menos de 12 meses (anualizar)",
+        help="Para monotributistas nuevos, ARCA proyecta: ingresos de los meses "
+             "transcurridos ÷ esos meses × 12. Marcalo e indicá el mes de inicio.",
+    )
+    if nuevo:
+        cci, ccj = st.columns(2)
+        mes_ini = cci.selectbox("Mes de inicio de actividad", list(range(1, 13)),
+                                index=ini_m - 1, format_func=lambda m: MT._MESNOM[m], key="mt_ini_mes")
+        anio_ini = ccj.number_input("Año de inicio", 2020, 2100, ini_a, 1, key="mt_ini_anio")
+        real, n_meses, detalle = MT.acumulado_rango(serie, int(anio_ini), int(mes_ini), int(anio), int(mes))
+        acumulado = MT.anualizar(real, n_meses)
+        st.info(f"Anualización: facturó **{formato_ar(real)}** en **{n_meses}** mes(es) → "
+                f"proyectado a 12 meses = **{formato_ar(acumulado)}**.")
+    else:
+        acumulado, detalle = MT.acumulado_12m(serie, int(anio), int(mes))
+
     a = MT.analizar(acumulado, actividad, escala)
 
     st.divider()
     m1, m2, m3 = st.columns(3)
-    m1.metric("Facturado últimos 12 meses", formato_ar(acumulado))
+    m1.metric("Anualizado (proyectado)" if nuevo else "Facturado últimos 12 meses",
+              formato_ar(acumulado))
     m2.metric("Categoría que le corresponde", a["categoria"])
     m3.metric("Cuota mensual", formato_ar(a["cuota"]) if a["cuota"] else "—")
 

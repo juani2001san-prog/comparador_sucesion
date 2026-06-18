@@ -135,6 +135,29 @@ def meses_disponibles(serie):
     return sorted(k for k, v in serie.items() if v)
 
 
+def acumulado_rango(serie, desde_año, desde_mes, hasta_año, hasta_mes):
+    """Suma los meses entre (desde) y (hasta) inclusive. Devuelve (total, cant_meses, detalle)."""
+    total = 0.0
+    detalle = []
+    y, m = desde_año, desde_mes
+    while (y, m) <= (hasta_año, hasta_mes):
+        monto = serie.get((y, m), 0.0)
+        total += monto
+        detalle.append((y, m, monto))
+        m += 1
+        if m == 13:
+            m = 1
+            y += 1
+    return round(total, 2), len(detalle), detalle
+
+
+def anualizar(total, meses):
+    """Proyecta a 12 meses (para inscriptos hace menos de 1 año)."""
+    if not meses:
+        return 0.0
+    return round(total / meses * 12, 2)
+
+
 def acumulado_12m(serie, hasta_año, hasta_mes):
     """Suma los 12 meses que terminan en (hasta_año, hasta_mes)."""
     total = 0.0
