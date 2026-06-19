@@ -1211,11 +1211,192 @@ def seccion_monotributo():
 
 
 # --------------------------------------------------------------------------- #
+# Tareas y checklist (compartido entre computadoras vía Supabase)
+# --------------------------------------------------------------------------- #
+
+def _miembros_equipo() -> list[str]:
+    """Nombres del equipo para el selector '¿Quién sos?'.
+
+    Se configuran en secrets:  [equipo]  miembros = ["Juani", "..."]
+    Si no están, usa una lista por defecto editable.
+    """
+    try:
+        miembros = list(st.secrets["equipo"]["miembros"])
+        if miembros:
+            return miembros
+    except Exception:
+        pass
+    return ["Juani"]
+
+
+def _quien_soy() -> str | None:
+    """Selector de identidad: quién está usando la app ahora."""
+    opciones = ["— elegí tu nombre —"] + _miembros_equipo()
+    actual = st.session_state.get("quien")
+    idx = opciones.index(actual) if actual in opciones else 0
+    sel = st.selectbox("👤 ¿Quién sos?", opciones, index=idx, key="sel_quien")
+    st.session_state["quien"] = sel
+    return None if sel == opciones[0] else sel
+
+
+def _fila_tarea(TDB, t: dict, quien: str | None) -> None:
+    """Una fila de la lista de tareas pendientes/hechas."""
+    c1, c2, c3 = st.columns([0.08, 0.77, 0.15])
+    nueva = c1.checkbox(
+        "hecha", value=t["hecha"], key=f"chk_t_{t['id']}_{int(t['hecha'])}",
+        label_visibility="collapsed",
+    )
+    if nueva != t["hecha"]:
+        if not quien:
+            st.warning("Elegí tu nombre arriba para tachar tareas.")
+        else:
+            TDB.marcar_tarea(t["id"], nueva, quien)
+            st.rerun()
+
+    texto = t["titulo"]
+    if t.get("monto"):
+        texto += f"  ·  **${formato_ar(t['monto'])}**"
+    c2.markdown(f"~~{texto}~~" if t["hecha"] else texto)
+
+    detalle = []
+    if t.get("nota"):
+        detalle.append(t["nota"])
+    if t.get("creada_por"):
+        detalle.append(f"📌 {t['creada_por']}")
+    if t["hecha"] and t.get("hecha_por"):
+        detalle.append(f"✔️ {t['hecha_por']}")
+    if detalle:
+        c2.caption("  ·  ".join(detalle))
+
+    if c3.button("🗑️", key=f"del_t_{t['id']}", help="Borrar tarea"):
+        TDB.borrar_tarea(t["id"])
+        st.rerun()
+
+
+def _ui_tareas(TDB, quien: str | None) -> None:
+    with st.form("nueva_tarea", clear_on_submit=True):
+        st.markdown("**➕ Nueva tarea**")
+        c1, c2 = st.columns([3, 1])
+        titulo = c1.text_input("¿Qué hay que hacer?", placeholder="Ej: hacer FC a Juani")
+        monto = c2.number_input("Monto $ (opcional)", min_value=0.0, value=0.0, step=1000.0)
+        nota = st.text_input("Nota (opcional)", placeholder="Aclaración, detalle…")
+        agregar = st.form_submit_button("Agregar", type="primary", use_container_width=True)
+    if agregar:
+        if not titulo.strip():
+            st.warning("Escribí qué hay que hacer.")
+        elif not quien:
+            st.warning("Primero elegí tu nombre arriba.")
+        else:
+            TDB.crear_tarea(titulo.strip(), nota.strip(), monto or None, quien)
+            st.rerun()
+
+    tareas = TDB.listar_tareas()
+    pendientes = [t for t in tareas if not t["hecha"]]
+    hechas = [t for t in tareas if t["hecha"]]
+
+    st.markdown(f"### Pendientes ({len(pendientes)})")
+    if not pendientes:
+        st.caption("🎉 No hay tareas pendientes.")
+    for t in pendientes:
+        _fila_tarea(TDB, t, quien)
+
+    if hechas:
+        with st.expander(f"✔️ Hechas ({len(hechas)})"):
+            for t in hechas:
+                _fila_tarea(TDB, t, quien)
+
+
+def _ui_rutinas(TDB, quien: str | None) -> None:
+    GRUPOS = {"diaria": "🗓️ Diarias", "semanal": "📅 Semanales", "mensual": "🈷️ Mensuales"}
+    OPCIONES = {"diaria": "Todos los días", "semanal": "Cada semana", "mensual": "Cada mes"}
+
+    with st.expander("➕ Agregar tarea rutinaria"):
+        with st.form("nueva_rutina", clear_on_submit=True):
+            titulo = st.text_input("Tarea rutinaria", placeholder="Ej: Cargar movimientos del banco")
+            frec = st.selectbox(
+                "¿Cada cuánto?", list(OPCIONES), format_func=lambda f: OPCIONES[f])
+            if st.form_submit_button("Agregar rutina", type="primary"):
+                if titulo.strip():
+                    TDB.crear_rutina(titulo.strip(), frec)
+                    st.rerun()
+
+    rutinas = TDB.listar_rutinas()
+    if not rutinas:
+        st.caption("Todavía no hay tareas rutinarias. Agregá la primera con el botón de arriba.")
+        return
+
+    periodos = {r["frecuencia"]: TDB.periodo_actual(r["frecuencia"]) for r in rutinas}
+    estados = TDB.estados_periodo(list(periodos.values()))
+
+    for frec, etiqueta in GRUPOS.items():
+        grupo = [r for r in rutinas if r["frecuencia"] == frec]
+        if not grupo:
+            continue
+        per = periodos[frec]
+        hechas = sum((r["id"], per) in estados for r in grupo)
+        st.markdown(f"### {etiqueta}  ·  {hechas}/{len(grupo)}")
+        for r in grupo:
+            fila = estados.get((r["id"], per))
+            hecha = fila is not None
+            c1, c2, c3 = st.columns([0.08, 0.77, 0.15])
+            nueva = c1.checkbox(
+                "hecha", value=hecha, key=f"chk_r_{r['id']}_{per}_{int(hecha)}",
+                label_visibility="collapsed",
+            )
+            if nueva != hecha:
+                if not quien:
+                    st.warning("Elegí tu nombre arriba para marcar rutinas.")
+                else:
+                    TDB.marcar_rutina(r["id"], per, nueva, quien)
+                    st.rerun()
+            c2.markdown(f"~~{r['titulo']}~~" if hecha else r["titulo"])
+            if hecha and fila.get("hecha_por"):
+                c2.caption(f"✔️ {fila['hecha_por']}")
+            if c3.button("🗑️", key=f"del_r_{r['id']}", help="Quitar rutina"):
+                TDB.borrar_rutina(r["id"])
+                st.rerun()
+
+
+def seccion_tareas():
+    from src import tareas_db as TDB
+
+    st.title("✅ Tareas y checklist")
+
+    if not TDB.hay_conexion():
+        st.warning(
+            "Todavía no está configurada la base de datos compartida (Supabase). "
+            "Cargá las credenciales en los *secrets* para empezar a usar esta sección."
+        )
+        st.caption(
+            "Necesitás un bloque `[supabase]` con `url` y `key` en "
+            "`.streamlit/secrets.toml` (local) o en Settings → Secrets (Streamlit Cloud)."
+        )
+        return
+
+    top1, top2 = st.columns([3, 1])
+    with top1:
+        quien = _quien_soy()
+    with top2:
+        st.write("")
+        if st.button("🔄 Actualizar", use_container_width=True, help="Traer lo último"):
+            st.rerun()
+
+    st.divider()
+
+    tab_tareas, tab_rutinas = st.tabs(["📌 Tareas pendientes", "🔁 Rutinas"])
+    with tab_tareas:
+        _ui_tareas(TDB, quien)
+    with tab_rutinas:
+        _ui_rutinas(TDB, quien)
+
+
+# --------------------------------------------------------------------------- #
 # Programa: menú de herramientas
 # --------------------------------------------------------------------------- #
 
 # Herramientas del programa: (clave, etiqueta del menú, función).
 _HERRAMIENTAS = [
+    ("tareas", "✅  Tareas y checklist", lambda: seccion_tareas()),
     ("comparador", "🧮  Comparador", lambda: seccion_comparador()),
     ("pdf", "🏦  PDF de banco → Excel", lambda: seccion_pdf_banco()),
     ("ps3", "📒  JWIN → PS3 (MICROENV)", lambda: seccion_ps3()),
