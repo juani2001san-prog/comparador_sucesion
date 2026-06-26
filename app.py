@@ -490,16 +490,31 @@ def seccion_comparador():
 
 def seccion_pdf_banco():
     st.title("🏦 PDF de banco → Excel")
-    st.caption("Convertí un extracto bancario en PDF a una tabla. Optimizado para "
-               "**Banco del Chubut** (también tiene un lector genérico de respaldo).")
+    st.caption("Convertí un extracto bancario en PDF a una tabla. Soporta "
+               "**Banco del Chubut**, **Banco de la Nación** y un lector genérico de respaldo.")
 
-    archivo = st.file_uploader("Subí el extracto en PDF", type=["pdf"], key="pdfbanco_file")
+    col_arch, col_banco = st.columns([2, 1])
+    with col_arch:
+        archivo = st.file_uploader("Subí el extracto en PDF", type=["pdf"], key="pdfbanco_file")
+    with col_banco:
+        AUTO = "Detectar automáticamente"
+        opciones = [AUTO] + PDFB.nombres_parsers()
+        eleccion = st.selectbox(
+            "Banco",
+            opciones,
+            index=0,
+            key="pdfbanco_banco",
+            help="Dejá en automático y la app intenta reconocerlo sola. "
+                 "Si la detección falla, elegí el banco a mano.",
+        )
+
     if archivo is None:
         st.info("Esperando un PDF… (tiene que ser un PDF con texto, no escaneado/foto).")
         return
 
+    forzado = None if eleccion == AUTO else eleccion
     try:
-        df, parser = PDFB.pdf_a_dataframe(archivo.getvalue())
+        df, parser = PDFB.pdf_a_dataframe(archivo.getvalue(), parser_nombre=forzado)
     except PDFB.ErrorConversion as exc:
         st.error(str(exc))
         return

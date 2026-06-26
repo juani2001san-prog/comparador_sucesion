@@ -45,6 +45,7 @@ Tabla = List[List[Optional[str]]]
 class PdfExtraido:
     lines: List[str]
     pages_tables: list = field(default_factory=list)
+    pages_words: list = field(default_factory=list)  # cada elemento: lista de dicts {text, x0, x1, top, bottom}
 
 
 class ErrorConversion(Exception):
@@ -62,6 +63,7 @@ def extraer_pdf(pdf_bytes: bytes) -> PdfExtraido:
 
     lines: list[str] = []
     pages_tables: list = []
+    pages_words: list = []
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for page in pdf.pages:
             texto = page.extract_text() or ""
@@ -69,10 +71,11 @@ def extraer_pdf(pdf_bytes: bytes) -> PdfExtraido:
                 if raw.strip():
                     lines.append(raw.strip())
             pages_tables.append(page.extract_tables() or [])
+            pages_words.append(page.extract_words() or [])
 
     if not lines:
         raise ErrorConversion("El PDF no contiene texto legible. Puede ser un PDF escaneado.")
-    return PdfExtraido(lines=lines, pages_tables=pages_tables)
+    return PdfExtraido(lines=lines, pages_tables=pages_tables, pages_words=pages_words)
 
 
 # --------------------------------------------------------------------------- #
@@ -266,7 +269,104 @@ class ParserGenerico(ParserBanco):
         )
 
 
-_PARSERS: List[ParserBanco] = [ParserChubut(), ParserGenerico()]
+# --------------------------------------------------------------------------- #
+# Parser Banco de la Nación Argentina (sin bordes de tabla → uso posición x)
+# --------------------------------------------------------------------------- #
+
+_AMOUNT_RE = re.compile(r"^-?\d{1,3}(?:\.\d{3})*,\d{2}-?$|^-?\d+,\d{2}-?$")
+_NACION_COLS = ("FECHA", "MOVIMIENTOS", "COMPROB.", "DEBITOS", "CREDITOS", "SALDO")
+
+
+def _agrupar_lineas(words: list, tol: float = 1.0) -> list:
+    """Agrupa palabras por línea (mismo top con tolerancia)."""
+    sorted_w = sorted(words, key=lambda w: (round(w["top"]), w["x0"]))
+    lineas: list = []
+    actual: list = []
+    last_top: Optional[float] = None
+    for w in sorted_w:
+        if last_top is None or abs(w["top"] - last_top) <= tol:
+            actual.append(w)
+        else:
+            lineas.append(actual)
+            actual = [w]
+        last_top = w["top"]
+    if actual:
+        lineas.append(actual)
+    return lineas
+
+
+def _detectar_columnas_nacion(lineas: list) -> Optional[dict]:
+    """Busca la línea del header (FECHA … SALDO) y devuelve el x1 de cada columna."""
+    for ln in lineas:
+        upper = {w["text"].upper(): w for w in ln}
+        if {"FECHA", "DEBITOS", "CREDITOS", "SALDO"}.issubset(upper.keys()):
+            return {nombre: upper[nombre]["x1"] for nombre in _NACION_COLS if nombre in upper}
+    return None
+
+
+class ParserNacion(ParserBanco):
+    """
+    Banco de la Nación Argentina: el PDF no tiene bordes de tabla, así que
+    cada número se clasifica como débito/crédito/saldo según su posición
+    horizontal (x1) comparada con la x1 del encabezado correspondiente.
+    """
+
+    name = "Banco de la Nación"
+
+    def puede_parsear(self, pdf: PdfExtraido) -> bool:
+        text = "\n".join(pdf.lines[:80]).upper()
+        return "BANCO DE LA NACION ARGENTINA" in text or "30-50001091-2" in text
+
+    def parsear(self, pdf: PdfExtraido) -> List[Movimiento]:
+        movs: List[Movimiento] = []
+        for words in pdf.pages_words:
+            if not words:
+                continue
+            lineas = _agrupar_lineas(words)
+            cols = _detectar_columnas_nacion(lineas)
+            if not cols:
+                continue
+            movs.extend(self._parsear_pagina(lineas, cols))
+        return movs
+
+    @staticmethod
+    def _parsear_pagina(lineas: list, cols: dict) -> List[Movimiento]:
+        x_comprob = cols.get("COMPROB.", cols["FECHA"])
+        x_deb, x_cre, x_sal = cols["DEBITOS"], cols["CREDITOS"], cols["SALDO"]
+        front_pre_deb = x_comprob + 15
+        front_deb_cre = (x_deb + x_cre) / 2
+        front_cre_sal = (x_cre + x_sal) / 2
+
+        result: List[Movimiento] = []
+        for ln in lineas:
+            if not ln or not _DATE_RE.match(ln[0]["text"]):
+                continue
+            fecha = ln[0]["text"]
+            desc_parts: list = []
+            debito = credito = saldo = None
+            for w in ln[1:]:
+                txt = w["text"]
+                if _AMOUNT_RE.match(txt):
+                    x1 = w["x1"]
+                    if x1 <= front_pre_deb:
+                        desc_parts.append(txt)
+                    elif x1 <= front_deb_cre:
+                        debito = _a_decimal_ar(txt)
+                    elif x1 <= front_cre_sal:
+                        credito = _a_decimal_ar(txt)
+                    else:
+                        saldo = _a_decimal_ar(txt)
+                else:
+                    desc_parts.append(txt)
+            result.append(Movimiento(
+                fecha=fecha,
+                descripcion=" ".join(desc_parts).strip(),
+                debito=debito, credito=credito, saldo=saldo,
+            ))
+        return result
+
+
+_PARSERS: List[ParserBanco] = [ParserChubut(), ParserNacion(), ParserGenerico()]
 
 
 def _elegir_parser(pdf: PdfExtraido) -> ParserBanco:
@@ -276,14 +376,38 @@ def _elegir_parser(pdf: PdfExtraido) -> ParserBanco:
     return _PARSERS[-1]
 
 
+def nombres_parsers() -> List[str]:
+    """Nombres de los parsers disponibles, en orden de prioridad."""
+    return [p.name for p in _PARSERS]
+
+
+def _parser_por_nombre(nombre: str) -> Optional[ParserBanco]:
+    for p in _PARSERS:
+        if p.name == nombre:
+            return p
+    return None
+
+
 # --------------------------------------------------------------------------- #
 # API pública
 # --------------------------------------------------------------------------- #
 
-def pdf_a_dataframe(pdf_bytes: bytes) -> Tuple[pd.DataFrame, str]:
-    """Convierte un extracto PDF a DataFrame. Devuelve (df, nombre_parser)."""
+def pdf_a_dataframe(pdf_bytes: bytes, parser_nombre: Optional[str] = None) -> Tuple[pd.DataFrame, str]:
+    """
+    Convierte un extracto PDF a DataFrame.
+
+    Si ``parser_nombre`` es None, se detecta automáticamente el banco.
+    Si se pasa un nombre (ej. "Banco de la Nación"), se fuerza ese parser.
+
+    Devuelve (df, nombre_parser).
+    """
     pdf = extraer_pdf(pdf_bytes)
-    parser = _elegir_parser(pdf)
+    if parser_nombre:
+        parser = _parser_por_nombre(parser_nombre)
+        if parser is None:
+            raise ErrorConversion(f"Parser '{parser_nombre}' no existe.")
+    else:
+        parser = _elegir_parser(pdf)
     movs = parser.parsear(pdf)
     if not movs:
         raise ErrorConversion("No se encontraron movimientos en el PDF.")
