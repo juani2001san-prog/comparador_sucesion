@@ -171,9 +171,9 @@ def cargar_archivo(titulo: str, prefijo: str):
 # Bloque CONTABILIDAD (siempre tabla simple)
 # --------------------------------------------------------------------------- #
 
-def bloque_contabilidad():
-    st.subheader("1) Mi contabilidad (Libro Diario)")
-    df = cargar_archivo("contabilidad", "c")
+def bloque_contabilidad(prefijo: str = "c", titulo: str = "1) Mi contabilidad (Libro Diario)"):
+    st.subheader(titulo)
+    df = cargar_archivo("contabilidad", prefijo)
     if df is None:
         return None
 
@@ -185,26 +185,26 @@ def bloque_contabilidad():
     g = st.columns(3)
     mapeo = {}
     with g[0]:
-        mapeo["fecha"] = _selector_columna("Fecha *", opc, sug["fecha"], "c_fecha")
-        mapeo["detalle"] = _selector_columna("Detalle", opc, sug["detalle"], "c_detalle")
-        mapeo["cuenta"] = _selector_columna("Cuenta / Centro (filtrar)", opc, sug["cuenta"], "c_cuenta")
+        mapeo["fecha"] = _selector_columna("Fecha *", opc, sug["fecha"], f"{prefijo}_fecha")
+        mapeo["detalle"] = _selector_columna("Detalle", opc, sug["detalle"], f"{prefijo}_detalle")
+        mapeo["cuenta"] = _selector_columna("Cuenta / Centro (filtrar)", opc, sug["cuenta"], f"{prefijo}_cuenta")
     with g[1]:
-        mapeo["debe"] = _selector_columna("Debe", opc, sug["debe"], "c_debe")
-        mapeo["haber"] = _selector_columna("Haber", opc, sug["haber"], "c_haber")
+        mapeo["debe"] = _selector_columna("Debe", opc, sug["debe"], f"{prefijo}_debe")
+        mapeo["haber"] = _selector_columna("Haber", opc, sug["haber"], f"{prefijo}_haber")
     with g[2]:
-        mapeo["importe"] = _selector_columna("Importe (con signo)", opc, sug["importe"], "c_importe")
-        mapeo["ingreso"] = _selector_columna("Ingreso", opc, sug["ingreso"], "c_ing")
-        mapeo["egreso"] = _selector_columna("Egreso", opc, sug["egreso"], "c_egr")
+        mapeo["importe"] = _selector_columna("Importe (con signo)", opc, sug["importe"], f"{prefijo}_importe")
+        mapeo["ingreso"] = _selector_columna("Ingreso", opc, sug["ingreso"], f"{prefijo}_ing")
+        mapeo["egreso"] = _selector_columna("Egreso", opc, sug["egreso"], f"{prefijo}_egr")
     st.caption("Para el importe usá **una** opción: Debe/Haber, o Importe (con signo), o Ingreso/Egreso.")
 
-    invertir = st.checkbox("Invertir signo (contabilidad)", key="c_inv")
+    invertir = st.checkbox("Invertir signo (contabilidad)", key=f"{prefijo}_inv")
 
     # Filtro opcional por cuenta/centro de costo.
     df_filtrado = df
     if mapeo["cuenta"] and mapeo["cuenta"] in df.columns:
         valores = sorted({str(v) for v in df[mapeo["cuenta"]].dropna().unique()})
         elegidos = st.multiselect(
-            f"Filtrar por '{mapeo['cuenta']}' (vacío = todo)", valores, key="c_filtro"
+            f"Filtrar por '{mapeo['cuenta']}' (vacío = todo)", valores, key=f"{prefijo}_filtro"
         )
         if elegidos:
             df_filtrado = df[df[mapeo["cuenta"]].astype(str).isin(elegidos)]
@@ -287,7 +287,7 @@ def bloque_planilla():
 # Resultado simple
 # --------------------------------------------------------------------------- #
 
-def mostrar_resultado(df_res, res):
+def mostrar_resultado(df_res, res, etiqueta_b: str = "Caja", key_prefix: str = ""):
     total = len(df_res)
     ok = res["OK"]
     con_dif = total - ok
@@ -300,8 +300,8 @@ def mostrar_resultado(df_res, res):
     c[2].metric("Diferencia de importe $", formato_ar(res["Total diferencia de importe"]))
 
     # Por defecto muestro SOLO los que tienen algo (no los OK).
-    ver_todos = st.checkbox("Mostrar también los que coinciden (OK)", value=False)
-    buscar = st.text_input("Buscar en el detalle (opcional)")
+    ver_todos = st.checkbox("Mostrar también los que coinciden (OK)", value=False, key=f"{key_prefix}ver_todos")
+    buscar = st.text_input("Buscar en el detalle (opcional)", key=f"{key_prefix}buscar")
 
     d = df_res if ver_todos else df_res[df_res["estado"] != CON.ESTADO_OK]
     if buscar:
@@ -315,12 +315,13 @@ def mostrar_resultado(df_res, res):
     # Vista simple: qué es, fecha, detalle, cuánto de cada lado y la diferencia.
     fecha = d["fecha_contab"].where(d["fecha_contab"].notna(), d["fecha_planilla"])
     detalle = d["detalle_contab"].where(d["detalle_contab"] != "", d["detalle_planilla"])
+    col_b = f"{etiqueta_b} $"
     vista = pd.DataFrame({
         "Qué pasó": d["estado"],
         "Fecha": fecha,
         "Detalle": detalle,
         "Contabilidad $": d["importe_contab"],
-        "Caja $": d["importe_planilla"],
+        col_b: d["importe_planilla"],
         "Diferencia $": d["diferencia"],
     })
     st.caption(f"{len(vista)} movimientos con diferencia.")
@@ -329,7 +330,7 @@ def mostrar_resultado(df_res, res):
         column_config={
             "Fecha": st.column_config.DateColumn("Fecha", format="DD/MM/YYYY"),
             "Contabilidad $": st.column_config.NumberColumn(format="%.2f"),
-            "Caja $": st.column_config.NumberColumn(format="%.2f"),
+            col_b: st.column_config.NumberColumn(format="%.2f"),
             "Diferencia $": st.column_config.NumberColumn(format="%.2f"),
         },
     )
@@ -540,6 +541,181 @@ def seccion_pdf_banco():
     )
     st.caption("Tip: después podés subir este Excel en el **Comparador** para cruzarlo "
                "contra tu contabilidad.")
+
+
+# --------------------------------------------------------------------------- #
+# Sección: Banco vs Contabilidad
+# --------------------------------------------------------------------------- #
+
+# Palabras del extracto bancario que NO son transferencias reales
+# (impuestos automáticos, comisiones, IVA sobre comisiones, etc.).
+_FILTRO_BANCO_DEFAULT = "GRAVAMEN LEY, COMIS.TRANSF, COMIS.COMPENSACION, I.V.A."
+
+
+def _df_banco_a_conciliar(df_pdf, palabras_excluir_csv: str):
+    """
+    Convierte el DataFrame del PDF de banco (Fecha/Descripción/Débito/Crédito/Saldo)
+    al esquema que usa ``conciliar``: ``fecha, detalle, importe, cuenta``.
+
+    - Importe: ``Crédito - Débito`` (ingreso positivo, egreso negativo).
+    - Filtra filas cuyo detalle contenga las palabras especificadas (impuestos, comisiones).
+    """
+    from src import normalizar as N
+
+    df = pd.DataFrame()
+    df["fecha"] = df_pdf["Fecha"].apply(N.parsear_fecha)
+    df["detalle"] = df_pdf["Descripción"].fillna("").apply(N.limpiar_texto)
+    debito = df_pdf["Débito"].fillna(0)
+    credito = df_pdf["Crédito"].fillna(0)
+    df["importe"] = (credito - debito).apply(N.redondear)
+    df["cuenta"] = ""
+    df = df[df["importe"] != 0.0].reset_index(drop=True)
+
+    palabras = [p.strip() for p in (palabras_excluir_csv or "").split(",") if p.strip()]
+    if palabras:
+        df = MAP._excluir_por_detalle(df, palabras).reset_index(drop=True)
+    return df
+
+
+def seccion_banco_contab():
+    st.title("🔄 Banco vs Contabilidad")
+    st.caption("Cruzá el extracto del banco (PDF) contra el mayor contable, "
+               "matcheando por **importe** (y opcionalmente fecha). "
+               "Se filtran impuestos y comisiones del lado banco.")
+
+    c_izq, c_der = st.columns(2)
+
+    # ---- Lado contabilidad ----
+    with c_izq:
+        contab = bloque_contabilidad(prefijo="bcc", titulo="1) Mayor contable")
+
+    # ---- Lado banco ----
+    with c_der:
+        st.subheader("2) Extracto del banco (PDF)")
+        archivo_pdf = st.file_uploader("PDF del extracto", type=["pdf"], key="bc_pdf")
+        AUTO = "Detectar automáticamente"
+        eleccion = st.selectbox(
+            "Banco", [AUTO] + PDFB.nombres_parsers(), key="bc_banco_sel",
+        )
+
+        df_banco_raw = None
+        parser_usado = None
+        if archivo_pdf is not None:
+            try:
+                forzado = None if eleccion == AUTO else eleccion
+                df_banco_raw, parser_usado = PDFB.pdf_a_dataframe(
+                    archivo_pdf.getvalue(), parser_nombre=forzado
+                )
+                st.success(f"✓ {len(df_banco_raw)} movimientos extraídos ({parser_usado}).")
+                st.dataframe(
+                    df_banco_raw.head(6),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Débito": st.column_config.NumberColumn(format="%.2f"),
+                        "Crédito": st.column_config.NumberColumn(format="%.2f"),
+                        "Saldo": st.column_config.NumberColumn(format="%.2f"),
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"No se pudo procesar el PDF: {exc}")
+
+    st.divider()
+    st.subheader("3) Filtros y opciones")
+
+    palabras_filtro = st.text_input(
+        "Excluir del banco las filas cuyo detalle contenga (separá con comas)",
+        value=_FILTRO_BANCO_DEFAULT,
+        key="bc_filtro_palabras",
+        help="Líneas del extracto que NO son transferencias reales: impuestos "
+             "automáticos (GRAVAMEN LEY), comisiones (COMIS.TRANSF, COMIS.COMPENSACION) "
+             "e IVA sobre comisiones. Se descartan antes de comparar.",
+    )
+
+    palabras_filtro_c = st.text_input(
+        "Excluir de la contabilidad las filas cuyo detalle contenga (separá con comas)",
+        value="SALDO ANTERIOR, SALDO FINAL, TRANSPORTE",
+        key="bc_filtro_palabras_c",
+        help="Líneas del mayor que NO son movimientos reales (saldos de apertura, "
+             "totales, líneas de transporte).",
+    )
+
+    o1, o2 = st.columns(2)
+    with o1:
+        ignorar_fechas = st.checkbox(
+            "Ignorar diferencias de fecha (comparar solo por importe)",
+            value=True, key="bc_ig_fechas",
+            help="Tildado: alcanza con que el importe coincida (las fechas pueden "
+                 "estar mal cargadas en cualquiera de los dos lados).",
+        )
+    with o2:
+        tolerancia = st.number_input(
+            "Tolerancia de fecha (días)", 0, 60, 7, 1,
+            disabled=ignorar_fechas, key="bc_tol",
+            help="Solo aplica si NO ignorás las fechas.",
+        )
+
+    listo = (
+        df_banco_raw is not None
+        and contab is not None and not contab["errores"]
+    )
+
+    if st.button("🔍 Comparar", type="primary",
+                 disabled=not listo, use_container_width=True, key="bc_btn"):
+        try:
+            df_c_full = MAP.construir(contab["df"], contab["mapeo"], contab["config"], contab["modo"])
+            palabras_c = [p.strip() for p in (palabras_filtro_c or "").split(",") if p.strip()]
+            df_c = MAP._excluir_por_detalle(df_c_full, palabras_c).reset_index(drop=True) if palabras_c else df_c_full
+            df_b = _df_banco_a_conciliar(df_banco_raw, palabras_filtro)
+            if df_b.empty:
+                st.warning("Tras el filtro no quedaron movimientos en el banco.")
+                return
+            tol = 10**9 if ignorar_fechas else int(tolerancia)
+            df_res = CON.conciliar(df_c, df_b, comparar_abs=True, tolerancia_dias=tol)
+            st.session_state["bc_res"] = {
+                "df_res": df_res, "df_c": df_c, "df_b": df_b,
+                "filtradas_b": len(df_banco_raw) - len(df_b),
+                "filtradas_c": len(df_c_full) - len(df_c),
+            }
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Error al comparar: {exc}")
+            st.exception(exc)
+
+    if "bc_res" not in st.session_state:
+        st.info("Cargá el PDF del banco y el Excel del mayor, mapeá las columnas "
+                "y tocá **Comparar**.")
+        return
+
+    r = st.session_state["bc_res"]
+    df_res, df_c, df_b = r["df_res"], r["df_c"], r["df_b"]
+
+    if df_res.empty:
+        st.warning("No se generaron resultados.")
+        return
+
+    msgs = []
+    if r.get("filtradas_b"):
+        msgs.append(f"{r['filtradas_b']} fila(s) del banco (impuestos / comisiones)")
+    if r.get("filtradas_c"):
+        msgs.append(f"{r['filtradas_c']} fila(s) de contabilidad (saldos / transportes)")
+    if msgs:
+        st.caption("Se filtraron: " + "; ".join(msgs) + ".")
+
+    resumen = CON.resumen(df_res, df_c, df_b)
+    st.divider()
+    mostrar_resultado(df_res, resumen, etiqueta_b="Banco", key_prefix="bc_")
+
+    st.divider()
+    st.subheader("Exportar")
+    excel = REP.exportar_excel(df_res, df_c, df_b, REP.resumen_df(resumen))
+    st.download_button(
+        "⬇️ Descargar Excel de diferencias",
+        data=excel,
+        file_name=f"banco_vs_contab_{datetime.now():%Y%m%d_%H%M}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        key="bc_dl",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1414,6 +1590,7 @@ _HERRAMIENTAS = [
     ("tareas", "✅  Tareas y checklist", lambda: seccion_tareas()),
     ("comparador", "🧮  Comparador", lambda: seccion_comparador()),
     ("pdf", "🏦  PDF de banco → Excel", lambda: seccion_pdf_banco()),
+    ("banco_contab", "🔄  Banco vs Contabilidad", lambda: seccion_banco_contab()),
     ("ps3", "📒  JWIN → PS3 (MICROENV)", lambda: seccion_ps3()),
     ("ventas", "🧾  Ventas por actividad (Tango)", lambda: seccion_ventas()),
     ("afip", "📥  AFIP → JWIN (rubros)", lambda: seccion_afip()),
