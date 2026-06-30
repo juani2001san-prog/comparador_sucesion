@@ -29,6 +29,7 @@ from src import ventas_tango as VT
 from src import afip_jwin as AJ
 from src import rango_compras as RC
 from src import monotributo as MT
+from src import iva as IVA
 from src.normalizar import formato_ar
 
 st.set_page_config(page_title="Herramientas del estudio", page_icon="🐣", layout="wide")
@@ -1548,6 +1549,155 @@ def _ui_rutinas(TDB, quien: str | None) -> None:
                 st.rerun()
 
 
+# --------------------------------------------------------------------------- #
+# Sección: Posición IVA
+# --------------------------------------------------------------------------- #
+
+def _bloque_carga_iva(label: str, key: str):
+    """Sube un archivo 'Mis Comprobantes' de AFIP y devuelve el DataFrame normalizado."""
+    st.subheader(label)
+    archivo = st.file_uploader(
+        "Excel descargado de AFIP — 'Mis Comprobantes'",
+        type=["xlsx", "xls"],
+        key=f"iva_{key}_file",
+    )
+    if archivo is None:
+        st.info("Esperando archivo…")
+        return None
+    try:
+        df = IVA.cargar_archivo_afip(archivo.getvalue())
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"No se pudo leer el archivo: {exc}")
+        return None
+
+    n_nc = int(df["es_nc"].sum())
+    st.success(f"✓ {len(df)} comprobantes ({n_nc} notas de crédito).")
+    with st.expander("Vista previa", expanded=False):
+        st.dataframe(
+            df[["fecha", "tipo", "punto_venta", "numero", "denominacion", "total_iva", "imp_total"]].head(20),
+            use_container_width=True, hide_index=True,
+            column_config={
+                "fecha": st.column_config.DateColumn("Fecha", format="DD/MM/YYYY"),
+                "total_iva": st.column_config.NumberColumn("Total IVA", format="%.2f"),
+                "imp_total": st.column_config.NumberColumn("Imp. Total", format="%.2f"),
+            },
+        )
+    return df
+
+
+def seccion_iva():
+    st.title("📊 Posición IVA")
+    st.caption("Subí los Excel de 'Mis Comprobantes' Emitidos y Recibidos descargados de AFIP. "
+               "Las **notas de crédito** se descuentan automáticamente. Indicá el saldo a favor "
+               "del período anterior (si lo hay) y obtené la posición.")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        df_emit = _bloque_carga_iva("1) Comprobantes emitidos", "emit")
+    with c2:
+        df_recib = _bloque_carga_iva("2) Comprobantes recibidos", "recib")
+
+    if df_emit is None or df_recib is None:
+        st.info("Subí los dos archivos para calcular la posición.")
+        return
+
+    # Selector de período si hay más de uno presente en cualquiera de los dos archivos.
+    periodos = sorted(set(IVA.periodos_presentes(df_emit)) | set(IVA.periodos_presentes(df_recib)))
+    if len(periodos) > 1:
+        TODOS = "Todos los períodos del archivo"
+        opcion = st.selectbox(
+            "📅 Período a calcular",
+            [TODOS] + periodos,
+            index=len(periodos),  # default: el último período
+            key="iva_periodo",
+            help="Los archivos traen más de un mes — elegí cuál querés calcular.",
+        )
+        periodo_sel = None if opcion == TODOS else opcion
+    elif len(periodos) == 1:
+        periodo_sel = periodos[0]
+        st.caption(f"Período detectado: **{periodo_sel}**")
+    else:
+        periodo_sel = None
+
+    df_emit_per = IVA.filtrar_por_periodo(df_emit, periodo_sel)
+    df_recib_per = IVA.filtrar_por_periodo(df_recib, periodo_sel)
+
+    st.divider()
+    st.subheader("3) Saldos del período anterior")
+    s1, s2 = st.columns(2)
+    with s1:
+        saldo_tec = st.number_input(
+            "Saldo SJ anterior técnico (a favor)",
+            value=0.0, step=1000.0, format="%.2f", key="iva_saldo_tec",
+            help="Saldo a favor TÉCNICO arrastrado del período anterior. Se RESTA a la posición.",
+        )
+    with s2:
+        saldo_ld = st.number_input(
+            "Saldo SJ anterior LD / retenciones",
+            value=0.0, step=1000.0, format="%.2f", key="iva_saldo_ld",
+            help="Saldo a favor de LIBRE DISPONIBILIDAD (retenciones, percepciones) del período "
+                 "anterior. Se RESTA a la posición.",
+        )
+
+    pos = IVA.calcular_posicion(df_emit_per, df_recib_per, saldo_tec, saldo_ld)
+    df_lado = pos["debito_fiscal"]
+    cf_lado = pos["credito_fiscal"]
+
+    st.divider()
+    st.subheader("Resultado")
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("IVA Débito Fiscal (a)", formato_ar(df_lado["neto"]))
+    m2.metric("IVA Crédito Fiscal (b)", formato_ar(cf_lado["neto"]))
+    if pos["posicion"] > 0:
+        m3.metric("📤 A pagar", formato_ar(pos["posicion"]))
+    elif pos["posicion"] < 0:
+        m3.metric("✅ Saldo a favor (sigue al próximo)", formato_ar(abs(pos["posicion"])))
+    else:
+        m3.metric("Posición", "0,00")
+
+    # Detalle del cálculo
+    detalle = pd.DataFrame([
+        ["IVA Débito Fiscal — Facturas + ND emitidos",   df_lado["fc"],   df_lado["cant_fact_nd"]],
+        ["IVA Débito Fiscal — Notas de Crédito emitidas", -df_lado["nc"],  df_lado["cant_nc"]],
+        ["IVA DF neto (a)",                               df_lado["neto"], df_lado["cant_fact_nd"] + df_lado["cant_nc"]],
+        ["", None, None],
+        ["IVA Crédito Fiscal — Facturas + ND recibidos",  cf_lado["fc"],   cf_lado["cant_fact_nd"]],
+        ["IVA Crédito Fiscal — Notas de Crédito recibidas", -cf_lado["nc"], cf_lado["cant_nc"]],
+        ["IVA CF neto (b)",                               cf_lado["neto"], cf_lado["cant_fact_nd"] + cf_lado["cant_nc"]],
+        ["", None, None],
+        ["(-) Saldo SJ anterior técnico (c)",            -pos["saldo_anterior_tecnico"], None],
+        ["(-) Saldo SJ anterior LD / retenciones (d)",   -pos["saldo_anterior_ld"], None],
+        ["", None, None],
+        ["POSICIÓN = a - b - c - d",                      pos["posicion"], None],
+    ], columns=["Concepto", "Importe", "Cantidad"])
+
+    st.dataframe(
+        detalle, use_container_width=True, hide_index=True,
+        column_config={
+            "Importe": st.column_config.NumberColumn(format="%.2f"),
+            "Cantidad": st.column_config.NumberColumn(format="%d"),
+        },
+    )
+
+    st.divider()
+    st.subheader("Exportar")
+    excel = IVA.exportar_excel(df_emit_per, df_recib_per, pos, periodo=periodo_sel)
+    nombre = f"posicion_iva_{periodo_sel or 'completo'}_{datetime.now():%Y%m%d_%H%M}.xlsx"
+    st.download_button(
+        "⬇️ Descargar Excel (cálculo + detalle de comprobantes)",
+        data=excel,
+        file_name=nombre,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        key="iva_dl",
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Sección: Tareas y checklist (Supabase)
+# --------------------------------------------------------------------------- #
+
 def seccion_tareas():
     from src import tareas_db as TDB
 
@@ -1596,6 +1746,7 @@ _HERRAMIENTAS = [
     ("afip", "📥  AFIP → JWIN (rubros)", lambda: seccion_afip()),
     ("rango", "📦  Rango — Compras (Paradigma)", lambda: seccion_rango()),
     ("monotributo", "📊  Monotributo — Recategorización", lambda: seccion_monotributo()),
+    ("iva", "💲  Posición IVA", lambda: seccion_iva()),
 ]
 
 
