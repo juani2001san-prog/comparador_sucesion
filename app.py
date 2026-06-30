@@ -1550,6 +1550,181 @@ def _ui_rutinas(TDB, quien: str | None) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Sección: Clientes del estudio
+# --------------------------------------------------------------------------- #
+
+def _form_cliente(prefijo: str, valores: dict | None = None) -> dict | None:
+    """Formulario de carga/edición de cliente. Devuelve los datos si se valida y submitea."""
+    from src import clientes_db as CDB
+
+    v = valores or {}
+    with st.form(key=f"{prefijo}_form", clear_on_submit=(valores is None)):
+        c1, c2 = st.columns(2)
+        with c1:
+            razon = st.text_input("Razón social *", value=v.get("razon_social", "") or "")
+            cuit = st.text_input("CUIT *", value=v.get("cuit", "") or "",
+                                 help="11 dígitos, con o sin guiones.")
+            tipo = st.selectbox("Tipo de contribuyente",
+                                CDB.TIPOS,
+                                index=CDB.TIPOS.index(v.get("tipo", "Monotributo"))
+                                      if v.get("tipo") in CDB.TIPOS else 0)
+            cat = st.selectbox("Categoría monotributo",
+                               [""] + CDB.CATEGORIAS_MONO,
+                               index=([""] + CDB.CATEGORIAS_MONO).index(v.get("categoria_mono") or ""),
+                               help="Solo aplica si es monotributista.")
+        with c2:
+            email = st.text_input("Email", value=v.get("email", "") or "")
+            telefono = st.text_input("Teléfono", value=v.get("telefono", "") or "")
+            domicilio = st.text_input("Domicilio", value=v.get("domicilio", "") or "")
+            c2a, c2b = st.columns(2)
+            with c2a:
+                dia = st.number_input("Día de cierre", 0, 31, int(v.get("dia_cierre") or 0),
+                                      help="0 = sin definir. Día del mes que cierra balance.")
+            with c2b:
+                mes = st.number_input("Mes de cierre", 0, 12, int(v.get("mes_cierre") or 0),
+                                      help="0 = sin definir. Para sociedades.")
+        obs = st.text_area("Observaciones", value=v.get("observaciones", "") or "", height=80)
+
+        guardar = st.form_submit_button("💾 Guardar" if valores else "➕ Crear cliente",
+                                         type="primary", use_container_width=True)
+        if not guardar:
+            return None
+
+        errores = []
+        if not razon.strip():
+            errores.append("Falta la razón social.")
+        if not CDB.validar_cuit(cuit):
+            errores.append("CUIT inválido (deben ser 11 dígitos con dígito verificador correcto).")
+        for e in errores:
+            st.error(e)
+        if errores:
+            return None
+
+        return {
+            "razon_social": razon.strip(),
+            "cuit": "".join(c for c in cuit if c.isdigit()),
+            "tipo": tipo,
+            "categoria_mono": cat or None,
+            "email": email or None,
+            "telefono": telefono or None,
+            "domicilio": domicilio or None,
+            "dia_cierre": int(dia) if dia else None,
+            "mes_cierre": int(mes) if mes else None,
+            "observaciones": obs or None,
+        }
+
+
+def seccion_clientes():
+    from src import clientes_db as CDB
+
+    st.title("👥 Clientes")
+
+    if not CDB.hay_conexion():
+        st.warning(
+            "Esta sección usa Supabase y todavía no están configuradas las credenciales. "
+            "Cargalas en `st.secrets['supabase']` (o en Streamlit Cloud → Settings → Secrets) "
+            "y volvé a entrar."
+        )
+        return
+
+    try:
+        incluir_inactivos = st.toggle("Mostrar también archivados", value=False, key="cli_inactivos")
+        clientes = CDB.listar(incluir_inactivos=incluir_inactivos)
+    except Exception as exc:  # noqa: BLE001
+        st.error("No se pudo leer la tabla `clientes` de Supabase. "
+                 "Asegurate de haber corrido `sql/clientes_setup.sql` en el SQL Editor del proyecto.")
+        st.exception(exc)
+        return
+
+    # --- Lista
+    if clientes:
+        df = pd.DataFrame(clientes)
+        buscar = st.text_input("🔎 Buscar", placeholder="razón social, CUIT, email…",
+                               key="cli_buscar")
+        if buscar:
+            t = buscar.strip().lower()
+            df = df[df.apply(lambda r: t in " ".join(
+                str(r.get(c, "") or "").lower() for c in ("razon_social", "cuit", "email", "telefono")
+            ), axis=1)]
+
+        df_view = df.copy()
+        df_view["CUIT"] = df_view["cuit"].apply(CDB.formato_cuit)
+        df_view["Activo"] = df_view["activo"].map({True: "✓", False: "—"})
+        df_view = df_view.rename(columns={
+            "razon_social": "Razón social",
+            "tipo": "Tipo",
+            "categoria_mono": "Cat.",
+            "email": "Email",
+            "telefono": "Teléfono",
+        })
+        cols_mostrar = ["Razón social", "CUIT", "Tipo", "Cat.", "Email", "Teléfono", "Activo"]
+        st.dataframe(df_view[cols_mostrar], use_container_width=True, hide_index=True)
+        st.caption(f"Total: {len(df)} cliente(s).")
+    else:
+        st.info("Todavía no hay clientes cargados. Usá **'Nuevo cliente'** abajo para empezar.")
+
+    st.divider()
+    tab_nuevo, tab_editar = st.tabs(["➕ Nuevo cliente", "✏️ Editar / archivar"])
+
+    with tab_nuevo:
+        datos = _form_cliente("nuevo")
+        if datos:
+            try:
+                existente = CDB.buscar_por_cuit(datos["cuit"])
+                if existente:
+                    st.error(f"Ya existe un cliente con CUIT {CDB.formato_cuit(datos['cuit'])}: "
+                             f"**{existente['razon_social']}**.")
+                else:
+                    CDB.crear(datos)
+                    st.success(f"Cliente creado: {datos['razon_social']}.")
+                    st.rerun()
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"No se pudo crear: {exc}")
+
+    with tab_editar:
+        if not clientes:
+            st.info("Cargá un cliente primero para poder editarlo.")
+        else:
+            opciones = {f"{c['razon_social']} ({CDB.formato_cuit(c['cuit'])})": c["id"] for c in clientes}
+            label = st.selectbox("Cliente a editar", list(opciones.keys()), key="cli_editar_sel")
+            cliente_id = opciones[label]
+            cliente = next(c for c in clientes if c["id"] == cliente_id)
+
+            datos = _form_cliente(f"edit_{cliente_id}", valores=cliente)
+            if datos:
+                try:
+                    CDB.actualizar(cliente_id, datos)
+                    st.success("Cliente actualizado.")
+                    st.rerun()
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"No se pudo actualizar: {exc}")
+
+            st.divider()
+            c1, c2 = st.columns(2)
+            with c1:
+                if cliente["activo"]:
+                    if st.button("📦 Archivar", key=f"arch_{cliente_id}", use_container_width=True,
+                                  help="Saca al cliente de la lista activa pero conserva sus datos."):
+                        CDB.archivar(cliente_id, True)
+                        st.success("Archivado.")
+                        st.rerun()
+                else:
+                    if st.button("♻️ Reactivar", key=f"react_{cliente_id}", use_container_width=True):
+                        CDB.archivar(cliente_id, False)
+                        st.success("Reactivado.")
+                        st.rerun()
+            with c2:
+                with st.expander("🗑️ Borrar definitivamente"):
+                    st.caption("Esto borra el registro de la base. No se puede deshacer. "
+                               "Usá **Archivar** salvo que sea un error de carga.")
+                    if st.button("Confirmar borrar", type="primary",
+                                 key=f"del_{cliente_id}", use_container_width=True):
+                        CDB.borrar(cliente_id)
+                        st.success("Borrado.")
+                        st.rerun()
+
+
+# --------------------------------------------------------------------------- #
 # Sección: Posición IVA
 # --------------------------------------------------------------------------- #
 
@@ -1738,6 +1913,7 @@ def seccion_tareas():
 # Herramientas agrupadas: cada grupo es (etiqueta, [(clave, etiqueta, render), ...]).
 _GRUPOS = [
     ("🏢 Gestión", [
+        ("clientes",     "👥  Clientes",                            lambda: seccion_clientes()),
         ("tareas",       "✅  Tareas y checklist",                  lambda: seccion_tareas()),
     ]),
     ("🏦 Bancos", [
