@@ -1554,35 +1554,63 @@ def _ui_rutinas(TDB, quien: str | None) -> None:
 # --------------------------------------------------------------------------- #
 
 def _form_cliente(prefijo: str, valores: dict | None = None) -> dict | None:
-    """Formulario de carga/edición de cliente. Devuelve los datos si se valida y submitea."""
+    """Formulario de carga/edición de cliente. Devuelve los datos si se valida y submitea.
+
+    Los campos cambian según el tipo de contribuyente:
+      - Monotributo: categoría (A-K)
+      - Sociedad: día y mes de cierre de balance
+      - RI / Exento / Otro: sin campos extra
+    """
     from src import clientes_db as CDB
 
     v = valores or {}
+
+    # El selector de tipo va FUERA del form para que los campos condicionales
+    # debajo reaccionen en tiempo real (los widgets dentro de st.form no
+    # disparan rerun hasta que se submitea).
+    tipo_inicial = v.get("tipo") if v.get("tipo") in CDB.TIPOS else "Monotributo"
+    tipo = st.selectbox(
+        "Tipo de contribuyente",
+        CDB.TIPOS,
+        index=CDB.TIPOS.index(tipo_inicial),
+        key=f"{prefijo}_tipo",
+    )
+
     with st.form(key=f"{prefijo}_form", clear_on_submit=(valores is None)):
         c1, c2 = st.columns(2)
         with c1:
             razon = st.text_input("Razón social *", value=v.get("razon_social", "") or "")
             cuit = st.text_input("CUIT *", value=v.get("cuit", "") or "",
                                  help="11 dígitos, con o sin guiones.")
-            tipo = st.selectbox("Tipo de contribuyente",
-                                CDB.TIPOS,
-                                index=CDB.TIPOS.index(v.get("tipo", "Monotributo"))
-                                      if v.get("tipo") in CDB.TIPOS else 0)
-            cat = st.selectbox("Categoría monotributo",
-                               [""] + CDB.CATEGORIAS_MONO,
-                               index=([""] + CDB.CATEGORIAS_MONO).index(v.get("categoria_mono") or ""),
-                               help="Solo aplica si es monotributista.")
-        with c2:
             email = st.text_input("Email", value=v.get("email", "") or "")
             telefono = st.text_input("Teléfono", value=v.get("telefono", "") or "")
+        with c2:
             domicilio = st.text_input("Domicilio", value=v.get("domicilio", "") or "")
-            c2a, c2b = st.columns(2)
-            with c2a:
-                dia = st.number_input("Día de cierre", 0, 31, int(v.get("dia_cierre") or 0),
-                                      help="0 = sin definir. Día del mes que cierra balance.")
-            with c2b:
-                mes = st.number_input("Mes de cierre", 0, 12, int(v.get("mes_cierre") or 0),
-                                      help="0 = sin definir. Para sociedades.")
+            cat = None
+            dia = None
+            mes = None
+            if tipo == "Monotributo":
+                cat_opciones = [""] + CDB.CATEGORIAS_MONO
+                cat = st.selectbox(
+                    "Categoría monotributo",
+                    cat_opciones,
+                    index=cat_opciones.index(v.get("categoria_mono") or ""),
+                )
+            elif tipo == "Sociedad":
+                ca, cb = st.columns(2)
+                with ca:
+                    dia = st.number_input(
+                        "Día de cierre", 0, 31, int(v.get("dia_cierre") or 0),
+                        help="Día del mes en que cierra el balance. 0 = sin definir.",
+                    )
+                with cb:
+                    mes = st.number_input(
+                        "Mes de cierre", 0, 12, int(v.get("mes_cierre") or 0),
+                        help="Mes del año en que cierra el balance. 0 = sin definir.",
+                    )
+            else:
+                st.caption("ℹ️ Sin campos extra para este tipo de contribuyente.")
+
         obs = st.text_area("Observaciones", value=v.get("observaciones", "") or "", height=80)
 
         guardar = st.form_submit_button("💾 Guardar" if valores else "➕ Crear cliente",
