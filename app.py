@@ -1642,6 +1642,86 @@ def _form_cliente(prefijo: str, valores: dict | None = None) -> dict | None:
         }
 
 
+def _panel_arca_cliente(cliente: dict):
+    """Botón 'Actualizar desde ARCA' + vista de los datos del padrón ya guardados."""
+    from src import clientes_db as CDB
+    from src.arca import certs as ACERTS, padron as APADRON, wsaa as AWSAA
+
+    st.subheader("🔄 Padrón ARCA")
+    pdata = cliente.get("padron_data") or {}
+    pact = cliente.get("padron_actualizado_en")
+    if pdata and pact:
+        st.caption(f"Última consulta: {pact}")
+    elif pdata:
+        st.caption("Datos cargados desde una consulta anterior.")
+    else:
+        st.caption("Todavía no se consultó el padrón para este cliente.")
+
+    if st.button("🔄 Consultar / actualizar desde ARCA",
+                 key=f"arca_{cliente['id']}", use_container_width=True, type="primary"):
+        try:
+            with st.spinner("Conectando con ARCA…"):
+                cert_pem, key_pem, cuit_titular = ACERTS.cargar()
+                cred = AWSAA.obtener_credenciales(
+                    servicio=APADRON.SERVICIO,
+                    cert_pem=cert_pem, key_pem=key_pem,
+                    cuit_titular=cuit_titular,
+                )
+                datos = APADRON.consultar(
+                    token=cred.token, sign=cred.sign,
+                    cuit_titular=cuit_titular,
+                    cuit_a_consultar=cliente["cuit"],
+                )
+            CDB.guardar_padron(cliente["id"], datos)
+            st.success("Padrón actualizado.")
+            st.rerun()
+        except FileNotFoundError as exc:
+            st.error(str(exc))
+            st.caption("Tip: subí el `.crt` y la `.key` a `certificados/` (local) "
+                       "o configurá `st.secrets['arca']` en Streamlit Cloud.")
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"No se pudo consultar ARCA: {exc}")
+            st.exception(exc)
+
+    if not pdata:
+        return
+
+    # Mostrar los datos del padrón en formato amigable
+    nombre = pdata.get("razon_social") or " ".join(
+        x for x in (pdata.get("nombre"), pdata.get("apellido")) if x
+    )
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Estado clave", pdata.get("estado_clave") or "—")
+    c2.metric("Tipo persona", pdata.get("tipo_persona") or "—")
+    c3.metric("Tipo clave", pdata.get("tipo_clave") or "—")
+    if nombre:
+        st.markdown(f"**{nombre}**")
+
+    dom = pdata.get("domicilio") or {}
+    if dom:
+        partes = [dom.get("direccion"), dom.get("localidad"),
+                  dom.get("provincia"), dom.get("codigo_postal")]
+        st.caption("📍 " + ", ".join(p for p in partes if p))
+
+    if pdata.get("categorias"):
+        st.markdown("**Monotributo / categorías**")
+        st.dataframe(pd.DataFrame(pdata["categorias"]),
+                     use_container_width=True, hide_index=True)
+
+    if pdata.get("impuestos"):
+        st.markdown("**Impuestos**")
+        st.dataframe(pd.DataFrame(pdata["impuestos"]),
+                     use_container_width=True, hide_index=True)
+
+    if pdata.get("actividades"):
+        st.markdown("**Actividades económicas**")
+        st.dataframe(pd.DataFrame(pdata["actividades"]),
+                     use_container_width=True, hide_index=True)
+
+    with st.expander("🧾 Ver respuesta completa (JSON)"):
+        st.json(pdata)
+
+
 def seccion_clientes():
     from src import clientes_db as CDB
 
@@ -1726,6 +1806,9 @@ def seccion_clientes():
                     st.rerun()
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"No se pudo actualizar: {exc}")
+
+            st.divider()
+            _panel_arca_cliente(cliente)
 
             st.divider()
             c1, c2 = st.columns(2)
