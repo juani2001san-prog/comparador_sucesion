@@ -1,0 +1,10 @@
+# Los archivos .key y .crt son secretos: NUNCA los subimos al repo.
+# Si los perdés, generás un CSR nuevo y volvés a tramitar el certificado en ARCA.
+*.key
+*.crt
+*.csr
+*.pfx
+*.p12
+
+# Pero sí queremos que la carpeta exista en el repo.
+!.gitignore
