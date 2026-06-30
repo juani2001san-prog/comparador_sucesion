@@ -88,55 +88,78 @@ def _lista(el: ET.Element, tag: str) -> list[ET.Element]:
 def _parsear_persona(xml_str: str, cuit_consultado: str) -> dict[str, Any]:
     root = ET.fromstring(xml_str)
 
-    # Buscamos el elemento <persona> en cualquier parte del árbol.
-    persona = next((el for el in root.iter() if el.tag.split("}")[-1] == "persona"), None)
-    if persona is None:
-        # Capaz vino un soap:Fault
-        for el in root.iter():
-            if el.tag.split("}")[-1] == "faultstring":
-                raise RuntimeError(f"ARCA devolvió error: {el.text}")
-        raise RuntimeError(f"ARCA no devolvió datos para CUIT {cuit_consultado}.\n{xml_str[:500]}")
+    # Primero chequeo si vino un fault SOAP.
+    for el in root.iter():
+        if el.tag.split("}")[-1] == "faultstring":
+            raise RuntimeError(f"ARCA devolvió error: {el.text}")
+
+    # El servicio de Constancia devuelve <personaReturn> con <datosGenerales>,
+    # <datosMonotributo>, <datosRegimenGeneral> adentro. Padrón A5 usa <persona>.
+    # Buscamos un contenedor que sirva para cualquiera de los dos.
+    contenedor = next(
+        (el for el in root.iter()
+         if el.tag.split("}")[-1] in ("personaReturn", "persona", "datosGenerales")),
+        None,
+    )
+    if contenedor is None:
+        raise RuntimeError(
+            f"ARCA no devolvió datos para CUIT {cuit_consultado}.\n{xml_str[:500]}"
+        )
 
     datos: dict[str, Any] = {
-        "cuit": _texto(persona, "idPersona") or cuit_consultado,
-        "tipo_persona": _texto(persona, "tipoPersona"),
-        "tipo_clave": _texto(persona, "tipoClave"),
-        "estado_clave": _texto(persona, "estadoClave"),
-        "razon_social": _texto(persona, "razonSocial"),
-        "nombre": _texto(persona, "nombre"),
-        "apellido": _texto(persona, "apellido"),
-        "fecha_nacimiento": _texto(persona, "fechaNacimiento"),
-        "fecha_inscripcion": _texto(persona, "fechaInscripcion"),
-        "mes_cierre": _texto(persona, "mesCierre"),
+        "cuit": _texto(contenedor, "idPersona") or cuit_consultado,
+        "tipo_persona": _texto(contenedor, "tipoPersona"),
+        "tipo_clave": _texto(contenedor, "tipoClave"),
+        "estado_clave": _texto(contenedor, "estadoClave"),
+        "razon_social": _texto(contenedor, "razonSocial"),
+        "nombre": _texto(contenedor, "nombre"),
+        "apellido": _texto(contenedor, "apellido"),
+        "fecha_nacimiento": _texto(contenedor, "fechaNacimiento"),
+        "fecha_inscripcion": _texto(contenedor, "fechaInscripcion"),
+        "mes_cierre": _texto(contenedor, "mesCierre"),
+        "es_sucesion": _texto(contenedor, "esSucesion"),
     }
 
-    # Domicilio fiscal
-    domicilios = _lista(persona, "domicilio")
-    if domicilios:
-        d = domicilios[0]
+    # Domicilio fiscal — puede llamarse <domicilio> (A5) o <domicilioFiscal> (constancia).
+    dom = next(
+        (el for el in contenedor.iter()
+         if el.tag.split("}")[-1] in ("domicilio", "domicilioFiscal")),
+        None,
+    )
+    if dom is not None:
         datos["domicilio"] = {
-            "tipo": _texto(d, "tipoDomicilio"),
-            "direccion": _texto(d, "direccion"),
-            "localidad": _texto(d, "localidad"),
-            "provincia": _texto(d, "descripcionProvincia"),
-            "codigo_postal": _texto(d, "codPostal"),
+            "tipo": _texto(dom, "tipoDomicilio"),
+            "direccion": _texto(dom, "direccion"),
+            "localidad": _texto(dom, "localidad"),
+            "provincia": _texto(dom, "descripcionProvincia") or _texto(dom, "provincia"),
+            "codigo_postal": _texto(dom, "codPostal"),
         }
 
-    # Categorías de monotributo y otros impuestos
+    # Categorías de monotributo. Pueden venir como <categoriaMonotributo> dentro de
+    # <datosMonotributo> (constancia), o como <categoria> sueltas (padrón A5).
     categorias = []
-    for cat in _lista(persona, "categoria"):
+    for cat in _lista(contenedor, "categoriaMonotributo"):
         categorias.append({
-            "idImpuesto": _texto(cat, "idImpuesto"),
-            "descripcion": _texto(cat, "descripcionCategoria"),
-            "estado": _texto(cat, "estado"),
+            "descripcion": _texto(cat, "descripcionCategoria")
+                           or _texto(cat, "idCategoria"),
+            "actividad": _texto(cat, "actividad"),
             "periodo": _texto(cat, "periodo"),
+            "estado": _texto(cat, "estado"),
         })
+    if not categorias:
+        for cat in _lista(contenedor, "categoria"):
+            categorias.append({
+                "idImpuesto": _texto(cat, "idImpuesto"),
+                "descripcion": _texto(cat, "descripcionCategoria"),
+                "estado": _texto(cat, "estado"),
+                "periodo": _texto(cat, "periodo"),
+            })
     if categorias:
         datos["categorias"] = categorias
 
-    # Impuestos (RI, etc.)
+    # Impuestos del régimen general (RI, IIBB, etc.)
     impuestos = []
-    for imp in _lista(persona, "impuesto"):
+    for imp in _lista(contenedor, "impuesto"):
         impuestos.append({
             "idImpuesto": _texto(imp, "idImpuesto"),
             "descripcion": _texto(imp, "descripcionImpuesto"),
