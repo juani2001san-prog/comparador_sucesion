@@ -1735,19 +1735,33 @@ def seccion_tareas():
 # Programa: menú de herramientas
 # --------------------------------------------------------------------------- #
 
-# Herramientas del programa: (clave, etiqueta del menú, función).
-_HERRAMIENTAS = [
-    ("tareas", "✅  Tareas y checklist", lambda: seccion_tareas()),
-    ("comparador", "🧮  Comparador", lambda: seccion_comparador()),
-    ("pdf", "🏦  PDF de banco → Excel", lambda: seccion_pdf_banco()),
-    ("banco_contab", "🔄  Banco vs Contabilidad", lambda: seccion_banco_contab()),
-    ("ps3", "📒  JWIN → PS3 (MICROENV)", lambda: seccion_ps3()),
-    ("ventas", "🧾  Ventas por actividad (Tango)", lambda: seccion_ventas()),
-    ("afip", "📥  AFIP → JWIN (rubros)", lambda: seccion_afip()),
-    ("rango", "📦  Rango — Compras (Paradigma)", lambda: seccion_rango()),
-    ("monotributo", "📊  Monotributo — Recategorización", lambda: seccion_monotributo()),
-    ("iva", "💲  Posición IVA", lambda: seccion_iva()),
+# Herramientas agrupadas: cada grupo es (etiqueta, [(clave, etiqueta, render), ...]).
+_GRUPOS = [
+    ("🏢 Gestión", [
+        ("tareas",       "✅  Tareas y checklist",                  lambda: seccion_tareas()),
+    ]),
+    ("🏦 Bancos", [
+        ("pdf",          "🏦  PDF de banco → Excel",                lambda: seccion_pdf_banco()),
+        ("banco_contab", "🔄  Banco vs Contabilidad",               lambda: seccion_banco_contab()),
+    ]),
+    ("💲 Impuestos", [
+        ("iva",          "💲  Posición IVA",                        lambda: seccion_iva()),
+        ("monotributo",  "📊  Monotributo — Recategorización",      lambda: seccion_monotributo()),
+    ]),
+    ("🔧 Conversiones entre sistemas", [
+        ("ps3",          "📒  JWIN → PS3 (MICROENV)",               lambda: seccion_ps3()),
+        ("afip",         "📥  AFIP → JWIN (rubros)",                lambda: seccion_afip()),
+        ("ventas",       "🧾  Ventas por actividad (Tango)",        lambda: seccion_ventas()),
+        ("rango",        "📦  Rango — Compras (Paradigma)",         lambda: seccion_rango()),
+    ]),
+    ("🧮 Otros", [
+        ("comparador",   "🧮  Comparador (Contab vs Caja sucesión)", lambda: seccion_comparador()),
+    ]),
 ]
+
+# Lista plana (clave, etiqueta, render) derivada de los grupos — para resolver
+# rápido qué render corresponde a la sección activa.
+_HERRAMIENTAS = [item for _, items in _GRUPOS for item in items]
 
 
 def _password_ok() -> bool:
@@ -1789,14 +1803,18 @@ def main():
     with st.sidebar:
         st.markdown("### 🐣 Herramientas del estudio")
         st.caption("Elegí una herramienta")
-        for clave, etiqueta, _ in _HERRAMIENTAS:
-            activo = st.session_state["seccion"] == clave
-            if st.button(
-                etiqueta, key=f"nav_{clave}", use_container_width=True,
-                type="primary" if activo else "secondary",
-            ):
-                st.session_state["seccion"] = clave
-                st.rerun()
+        for i, (grupo, items) in enumerate(_GRUPOS):
+            if i > 0:
+                st.markdown("")  # separación leve entre grupos
+            st.markdown(f"**{grupo}**")
+            for clave, etiqueta, _ in items:
+                activo = st.session_state["seccion"] == clave
+                if st.button(
+                    etiqueta, key=f"nav_{clave}", use_container_width=True,
+                    type="primary" if activo else "secondary",
+                ):
+                    st.session_state["seccion"] = clave
+                    st.rerun()
         st.divider()
         st.caption("Programa de uso diario.\nSe irán agregando más herramientas.")
 
