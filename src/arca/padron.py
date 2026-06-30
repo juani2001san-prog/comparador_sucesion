@@ -171,7 +171,7 @@ def _parsear_persona(xml_str: str, cuit_consultado: str) -> dict[str, Any]:
 
     # Actividades económicas
     actividades = []
-    for act in _lista(persona, "actividad"):
+    for act in _lista(contenedor, "actividad"):
         actividades.append({
             "id": _texto(act, "idActividad"),
             "descripcion": _texto(act, "descripcionActividad"),
