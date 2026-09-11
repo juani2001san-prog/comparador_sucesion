@@ -2023,13 +2023,13 @@ def seccion_tareas():
 
 # Herramientas agrupadas: cada grupo es (etiqueta, [(clave, etiqueta, render), ...]).
 _GRUPOS = [
-    ("🏢 Gestión", [
-        # ("clientes",     "👥  Clientes",                            lambda: seccion_clientes()),
-        # ↑ Sección deshabilitada temporalmente. Los archivos (seccion_clientes,
-        #   src/clientes_db.py, src/arca/*) siguen en el repo; para reactivarla,
-        #   descomentar esta línea.
-        ("tareas",       "✅  Tareas y checklist",                  lambda: seccion_tareas()),
-    ]),
+    # Grupo "🏢 Gestión" deshabilitado temporalmente. Los archivos siguen en el
+    # repo (seccion_clientes, seccion_tareas, src/clientes_db.py, src/tareas_db.py,
+    # src/arca/*); para reactivar cualquiera, descomentar la línea correspondiente.
+    # ("🏢 Gestión", [
+    #     ("clientes", "👥  Clientes",           lambda: seccion_clientes()),
+    #     ("tareas",   "✅  Tareas y checklist", lambda: seccion_tareas()),
+    # ]),
     ("🏦 Bancos", [
         ("pdf",          "🏦  PDF de banco → Excel",                lambda: seccion_pdf_banco()),
         ("banco_contab", "🔄  Banco vs Contabilidad",               lambda: seccion_banco_contab()),
