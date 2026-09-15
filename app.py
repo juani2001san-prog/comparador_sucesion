@@ -1065,6 +1065,76 @@ def seccion_afip():
 
     csv_bytes = up_csv.getvalue()
     maestro_bytes = up_maestro.getvalue()
+
+    # -------------------------------------------------------------------- #
+    # Paso previo: si es el CSV crudo del Portal IVA, normalizarlo antes
+    # de mapear rubros. Mueve Impuestos Internos y Otros Tributos al No
+    # Gravado para que JWIN no descuadre las facturas (JWIN importa por
+    # posición y no tiene esas dos columnas).
+    # -------------------------------------------------------------------- #
+    mes_periodo = None
+    if AJ.es_csv_portal_iva(csv_bytes):
+        norm = AJ.normalizar_portal_iva(csv_bytes)
+
+        if norm["errores_header"]:
+            st.error("El encabezado del CSV no coincide con el layout del Portal IVA. "
+                     "ARCA capaz cambió el archivo — revisá los cambios antes de seguir.")
+            for e in norm["errores_header"]:
+                st.write(f"• {e}")
+            return
+
+        # Reporte visual: comprobantes / modificados / descartados.
+        st.subheader("🧾 Normalización del CSV")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Comprobantes", norm["comprobantes"])
+        c2.metric("Modificados (R+S → K)", len(norm["modificados"]))
+        c3.metric("Filas descartadas", len(norm["descartados"]))
+        c4.metric("Descuadres", len(norm["descuadres"]))
+
+        if norm["modificados"]:
+            with st.expander(f"Ver comprobantes modificados ({len(norm['modificados'])})",
+                             expanded=True):
+                st.dataframe(
+                    pd.DataFrame(norm["modificados"]),
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "importe_movido": st.column_config.NumberColumn(
+                            "Importe movido a No Gravado", format="%.2f"),
+                    },
+                )
+                total_movido = sum(m["importe_movido"] for m in norm["modificados"])
+                st.caption(f"Total movido a No Gravado: **${total_movido:,.2f}** "
+                           "(antes se perdía porque JWIN no mapea esas columnas).")
+
+        if norm["descartados"]:
+            with st.expander(f"Ver filas descartadas ({len(norm['descartados'])})"):
+                st.caption("Filas sin CUIT válido de 11 dígitos: totales, vacías o mal formadas.")
+                st.dataframe(pd.DataFrame(norm["descartados"]),
+                             use_container_width=True, hide_index=True)
+
+        # Si hay descuadres, NO habilitamos la descarga: hay que revisar a mano.
+        if norm["descuadres"]:
+            st.error(
+                f"❌ Hay {len(norm['descuadres'])} comprobante(s) que no cuadran "
+                "(Total ≠ Neto + No Gravado + Exento + IVA + percepciones, "
+                f"tolerancia $0,05). No se puede bajar el archivo hasta que se resuelvan."
+            )
+            st.dataframe(
+                pd.DataFrame(norm["descuadres"]),
+                use_container_width=True, hide_index=True,
+                column_config={
+                    "total": st.column_config.NumberColumn("Total cabecera", format="%.2f"),
+                    "calculado": st.column_config.NumberColumn("Suma columnas", format="%.2f"),
+                    "diferencia": st.column_config.NumberColumn("Diferencia", format="%.2f"),
+                },
+            )
+            return
+
+        # Todo OK: seguimos el flujo con el CSV normalizado.
+        csv_bytes = norm["csv_bytes"]
+        mes_periodo = norm["mes_periodo"]
+        st.success(f"✅ CSV normalizado sin descuadres. Período detectado: **{mes_periodo}**")
+
     try:
         encab, filas, desconocidos, stats, rubros = AJ.procesar(csv_bytes, maestro_bytes)
     except Exception as exc:  # noqa: BLE001
@@ -1124,10 +1194,11 @@ def seccion_afip():
         st.dataframe(vista, use_container_width=True, hide_index=True)
 
     cda, cdb = st.columns(2)
+    sufijo_mes = mes_periodo or datetime.now().strftime("%m-%Y")
     cda.download_button(
         "⬇️ CSV para importar a JWIN",
         data=AJ.construir_csv(encab, filas),
-        file_name=f"Importacion JWIN {datetime.now():%m-%Y}.csv",
+        file_name=f"Importacion_JWIN_{sufijo_mes}.csv",
         mime="text/csv", use_container_width=True,
     )
     cdb.download_button(
