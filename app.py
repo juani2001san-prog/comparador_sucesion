@@ -2052,6 +2052,183 @@ def seccion_iva():
 
 
 # --------------------------------------------------------------------------- #
+# Sección: Facturas por foto (lectura de QR de AFIP)
+# --------------------------------------------------------------------------- #
+
+# Layout del CSV Portal IVA (mismo que ya normaliza afip_jwin.py). Al bajar el
+# Excel dejamos vacías las columnas que el QR no trae (netos por alícuota, IVA,
+# etc.) — el usuario las completa después con LLM Vision (fase 2) o a mano.
+_FACTURAI_COLUMNAS = [
+    "Fecha", "Tipo", "Punto de Venta", "Número", "Tipo Doc. Vendedor",
+    "Nro. Doc. Vendedor", "Denominación Vendedor", "Importe Total",
+    "Moneda", "Cotización",
+    "No Gravado", "Exento", "Crédito Fiscal", "Percep. Otros Imp. Nac.",
+    "Percep. Ingresos Brutos", "Impuestos Municipales", "Percep. IVA",
+    "Impuestos Internos", "Otros Tributos",
+    "Neto Grav. IVA 0%",
+    "Neto Grav. IVA 2,5%", "IVA 2,5%",
+    "Neto Grav. IVA 5%",   "IVA 5%",
+    "Neto Grav. IVA 10,5%", "IVA 10,5%",
+    "Neto Grav. IVA 21%",   "IVA 21%",
+    "Neto Grav. IVA 27%",   "IVA 27%",
+    "Total Neto Gravado", "Total IVA",
+    "CAE", "Origen",
+]
+
+
+def _facturai_fila(datos: dict) -> dict:
+    """Convierte los datos de un QR de AFIP a una fila del layout Portal IVA."""
+    fila = {c: "" for c in _FACTURAI_COLUMNAS}
+    fila["Fecha"] = datos.get("fecha") or ""
+    fila["Tipo"] = f"{datos.get('tipo_comprobante_codigo') or ''} - {datos.get('tipo_comprobante') or ''}".strip(" -")
+    fila["Punto de Venta"] = datos.get("punto_venta") or ""
+    fila["Número"] = datos.get("numero") or ""
+    fila["Tipo Doc. Vendedor"] = "80 - CUIT"
+    fila["Nro. Doc. Vendedor"] = datos.get("cuit_emisor") or ""
+    fila["Denominación Vendedor"] = ""   # el QR NO trae razón social; se completa después
+    fila["Importe Total"] = datos.get("importe_total") or 0
+    fila["Moneda"] = datos.get("moneda") or ""
+    fila["Cotización"] = datos.get("cotizacion") or ""
+    fila["CAE"] = str(datos.get("codigo_autorizacion") or "")
+    fila["Origen"] = "QR"
+    return fila
+
+
+def _facturai_a_excel(facturas: list[dict]) -> bytes:
+    """Genera un Excel con las facturas acumuladas en el layout tipo Portal IVA."""
+    import io as _io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Facturas"
+
+    bold = Font(bold=True, color="FFFFFF")
+    fill = PatternFill("solid", fgColor="1F4E78")
+    for j, col in enumerate(_FACTURAI_COLUMNAS, start=1):
+        c = ws.cell(1, j, col)
+        c.font = bold
+        c.fill = fill
+
+    for i, f in enumerate(facturas, start=2):
+        for j, col in enumerate(_FACTURAI_COLUMNAS, start=1):
+            ws.cell(i, j, f.get(col, ""))
+
+    # Anchos razonables
+    anchos = {"A": 12, "B": 22, "C": 8, "D": 12, "E": 14, "F": 14,
+              "G": 40, "H": 14, "I": 10, "J": 10, "AF": 20, "AG": 10}
+    for letra, ancho in anchos.items():
+        ws.column_dimensions[letra].width = ancho
+    ws.freeze_panes = "A2"
+
+    buf = _io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def seccion_facturai():
+    from src.facturai import qr as QR
+
+    st.title("📸 Facturas por foto → Excel")
+    st.caption("Subí una foto o PDF de una factura, la app lee el **QR de AFIP** y le "
+               "extrae los datos oficiales del comprobante. Cada factura procesada se "
+               "suma a la tabla — al final bajás un Excel con todo.")
+
+    # Estado en la sesión: lista de facturas acumuladas.
+    if "facturai_lista" not in st.session_state:
+        st.session_state["facturai_lista"] = []      # cada item: dict con la fila
+        st.session_state["facturai_datos"] = []      # cada item: dict con los datos crudos del QR
+
+    archivos = st.file_uploader(
+        "Foto(s) o PDF(s) de facturas",
+        type=["jpg", "jpeg", "png", "webp", "bmp", "tif", "tiff", "pdf"],
+        accept_multiple_files=True,
+        key="facturai_up",
+    )
+
+    procesar = st.button("🔍 Procesar archivos", type="primary",
+                         disabled=not archivos, use_container_width=True)
+
+    if procesar and archivos:
+        errores = []
+        with st.spinner(f"Buscando QR en {len(archivos)} archivo(s)…"):
+            for arch in archivos:
+                res = QR.procesar_archivo(arch.getvalue())
+                if not res.get("ok"):
+                    errores.append((arch.name, res.get("error", "Sin QR detectado")))
+                    continue
+                datos = res["datos"]
+                # Chequeo de duplicados (mismo CAE)
+                cae = str(datos.get("codigo_autorizacion") or "")
+                if cae and any(str(d.get("codigo_autorizacion") or "") == cae
+                               for d in st.session_state["facturai_datos"]):
+                    errores.append((arch.name, "Ya estaba cargada (mismo CAE)"))
+                    continue
+                st.session_state["facturai_datos"].append(datos)
+                st.session_state["facturai_lista"].append(_facturai_fila(datos))
+        if errores:
+            with st.expander(f"⚠️ {len(errores)} archivo(s) no se procesaron", expanded=True):
+                for nombre, motivo in errores:
+                    st.write(f"• **{nombre}**: {motivo}")
+
+    # Tabla acumulada
+    lista = st.session_state["facturai_lista"]
+    if not lista:
+        st.info("Todavía no hay facturas cargadas. Subí una o varias imágenes/PDFs y tocá **Procesar**.")
+        return
+
+    st.divider()
+    st.subheader(f"📋 Facturas acumuladas ({len(lista)})")
+
+    # Vista compacta con las columnas más útiles
+    vista = pd.DataFrame([{
+        "Fecha": f["Fecha"],
+        "Tipo": f["Tipo"],
+        "CUIT emisor": QR.formato_cuit(f["Nro. Doc. Vendedor"]),
+        "Pto Vta - Nro": f"{str(f['Punto de Venta']).zfill(5)}-{str(f['Número']).zfill(8)}"
+                        if f["Punto de Venta"] and f["Número"] else "",
+        "Importe": f["Importe Total"],
+        "Moneda": f["Moneda"],
+        "CAE": f["CAE"],
+    } for f in lista])
+    st.dataframe(
+        vista, use_container_width=True, hide_index=True,
+        column_config={
+            "Importe": st.column_config.NumberColumn(format="%.2f"),
+        },
+    )
+    total = sum(float(f["Importe Total"] or 0) for f in lista)
+    st.caption(f"Suma total de importes cargados: **${total:,.2f}**")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        excel = _facturai_a_excel(lista)
+        c1.download_button(
+            "⬇️ Descargar Excel con todo",
+            data=excel,
+            file_name=f"Facturas_procesadas_{datetime.now():%Y%m%d_%H%M}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="facturai_dl",
+        )
+    with c2:
+        if c2.button("🗑️ Vaciar lista", use_container_width=True, key="facturai_clear"):
+            st.session_state["facturai_lista"] = []
+            st.session_state["facturai_datos"] = []
+            st.rerun()
+
+    with st.expander("Ver JSON de la última factura cargada"):
+        st.json(st.session_state["facturai_datos"][-1])
+
+    st.caption("**Nota**: el QR de AFIP trae los datos oficiales (CUIT, tipo, número, "
+               "fecha, importe total, CAE) pero NO trae razón social ni el desglose "
+               "de netos por alícuota / IVA. Esos campos quedan vacíos por ahora — "
+               "en la próxima fase los completamos con Claude Vision para las facturas "
+               "que lo tengan legible.")
+
+
+# --------------------------------------------------------------------------- #
 # Sección: Tareas y checklist (Supabase)
 # --------------------------------------------------------------------------- #
 
@@ -2110,6 +2287,7 @@ _GRUPOS = [
         ("monotributo",  "📊  Monotributo — Recategorización",      lambda: seccion_monotributo()),
     ]),
     ("🔧 Conversiones entre sistemas", [
+        ("facturai",     "📸  Facturas por foto → Excel",           lambda: seccion_facturai()),
         ("ps3",          "📒  JWIN → PS3 (MICROENV)",               lambda: seccion_ps3()),
         ("afip",         "📥  AFIP → JWIN (rubros)",                lambda: seccion_afip()),
         ("ventas",       "🧾  Ventas por actividad (Tango)",        lambda: seccion_ventas()),
