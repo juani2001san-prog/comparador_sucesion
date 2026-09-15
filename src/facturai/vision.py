@@ -27,7 +27,7 @@ except ImportError:  # pragma: no cover
     st = None  # type: ignore
 
 
-MODELO_DEFAULT = "gemini-2.5-flash"
+MODELO_DEFAULT = "gemini-3.6-flash"
 
 _PROMPT = """Analizá esta imagen de una factura o ticket fiscal argentino y devolveme
 SOLO un JSON válido con la siguiente estructura, sin texto adicional, sin markdown,
