@@ -158,30 +158,81 @@ def formato_cuit(cuit: str) -> str:
 # --------------------------------------------------------------------------- #
 
 def _detectar_qr_en_imagen_bytes(image_bytes: bytes) -> str | None:
-    """Corre el detector de OpenCV sobre una imagen. Devuelve la URL del QR o None."""
+    """
+    Detecta un QR en una imagen. Prueba varias estrategias en cascada porque
+    el detector de OpenCV suele fallar con fotos de celular:
+
+      1. Imagen original (respeta orientación EXIF).
+      2. Convertida a escala de grises.
+      3. Reescalada más grande si es pequeña.
+      4. Con contraste aumentado (adaptive threshold).
+      5. Rotada 90°, 180°, 270°.
+    """
     import cv2
     import numpy as np
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     img = Image.open(io.BytesIO(image_bytes))
+    # Aplicar rotación EXIF (las fotos de celular guardan la orientación como
+    # metadata, PIL/opencv la ignoran por defecto).
+    img = ImageOps.exif_transpose(img)
     if img.mode not in ("RGB", "L"):
         img = img.convert("RGB")
-    arr = np.array(img)
-    if arr.ndim == 3:
-        # PIL RGB → OpenCV BGR
-        arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+
+    arr_rgb = np.array(img)
+    if arr_rgb.ndim == 3:
+        arr_bgr = cv2.cvtColor(arr_rgb, cv2.COLOR_RGB2BGR)
+    else:
+        arr_bgr = arr_rgb
+    gris = cv2.cvtColor(arr_bgr, cv2.COLOR_BGR2GRAY) if arr_bgr.ndim == 3 else arr_bgr
 
     detector = cv2.QRCodeDetector()
-    data, _points, _straight = detector.detectAndDecode(arr)
-    if data:
-        return data
 
-    # Si falla, probar con el detector "multi" que a veces es más robusto
-    ok, datos, _pts, _straight = detector.detectAndDecodeMulti(arr)
-    if ok and datos:
-        for d in datos:
-            if d:
-                return d
+    def _intentar(imagen):
+        # Probar detección simple y luego multi
+        try:
+            data, _p, _s = detector.detectAndDecode(imagen)
+            if data:
+                return data
+        except cv2.error:
+            pass
+        try:
+            ok, datos, _p, _s = detector.detectAndDecodeMulti(imagen)
+            if ok and datos:
+                for d in datos:
+                    if d:
+                        return d
+        except cv2.error:
+            pass
+        return None
+
+    variantes = [arr_bgr, gris]
+
+    # Reescalar si la imagen es chica (a veces el QR queda de pocos pixels).
+    h, w = gris.shape[:2]
+    if max(h, w) < 1200:
+        factor = 1600 / max(h, w)
+        gris_grande = cv2.resize(gris, None, fx=factor, fy=factor,
+                                 interpolation=cv2.INTER_CUBIC)
+        variantes.append(gris_grande)
+
+    # Contraste con threshold adaptativo (ayuda con tickets térmicos claros).
+    try:
+        thr = cv2.adaptiveThreshold(
+            gris, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 51, 10,
+        )
+        variantes.append(thr)
+    except cv2.error:
+        pass
+
+    # Rotaciones (por si la foto salió con la factura acostada).
+    for k in (1, 2, 3):
+        variantes.append(np.rot90(gris, k=k).copy())
+
+    for v in variantes:
+        res = _intentar(v)
+        if res:
+            return res
     return None
 
 
