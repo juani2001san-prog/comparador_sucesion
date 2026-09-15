@@ -2077,7 +2077,11 @@ _FACTURAI_COLUMNAS = [
 
 
 def _facturai_fila(datos: dict) -> dict:
-    """Convierte los datos de un QR de AFIP a una fila del layout Portal IVA."""
+    """
+    Convierte los datos de un comprobante (venga del QR o de Gemini Vision)
+    a una fila del layout Portal IVA. Los campos que solo trae Gemini
+    (razón social, netos, IVA, alícuota) se completan cuando existan.
+    """
     fila = {c: "" for c in _FACTURAI_COLUMNAS}
     fila["Fecha"] = datos.get("fecha") or ""
     fila["Tipo"] = f"{datos.get('tipo_comprobante_codigo') or ''} - {datos.get('tipo_comprobante') or ''}".strip(" -")
@@ -2085,12 +2089,40 @@ def _facturai_fila(datos: dict) -> dict:
     fila["Número"] = datos.get("numero") or ""
     fila["Tipo Doc. Vendedor"] = "80 - CUIT"
     fila["Nro. Doc. Vendedor"] = datos.get("cuit_emisor") or ""
-    fila["Denominación Vendedor"] = ""   # el QR NO trae razón social; se completa después
+    fila["Denominación Vendedor"] = datos.get("razon_social_emisor") or ""
     fila["Importe Total"] = datos.get("importe_total") or 0
     fila["Moneda"] = datos.get("moneda") or ""
     fila["Cotización"] = datos.get("cotizacion") or ""
     fila["CAE"] = str(datos.get("codigo_autorizacion") or "")
-    fila["Origen"] = "QR"
+    fila["Origen"] = "Vision" if datos.get("fuente") == "gemini" else "QR"
+
+    # Netos por alícuota (solo si vinieron de Vision)
+    neto = datos.get("importe_neto_gravado")
+    iva = datos.get("importe_iva")
+    alicuota = datos.get("alicuota_iva")
+    if neto is not None:
+        fila["Total Neto Gravado"] = neto
+        # Si sabemos la alícuota principal, ponemos el neto e IVA en la columna correcta
+        alic_map = {0: ("Neto Grav. IVA 0%", None),
+                    2.5: ("Neto Grav. IVA 2,5%", "IVA 2,5%"),
+                    5: ("Neto Grav. IVA 5%", "IVA 5%"),
+                    10.5: ("Neto Grav. IVA 10,5%", "IVA 10,5%"),
+                    21: ("Neto Grav. IVA 21%", "IVA 21%"),
+                    27: ("Neto Grav. IVA 27%", "IVA 27%")}
+        columnas_alic = alic_map.get(alicuota)
+        if columnas_alic:
+            col_neto, col_iva = columnas_alic
+            fila[col_neto] = neto
+            if col_iva and iva is not None:
+                fila[col_iva] = iva
+    if iva is not None:
+        fila["Total IVA"] = iva
+    if datos.get("importe_no_gravado") is not None:
+        fila["No Gravado"] = datos["importe_no_gravado"]
+    if datos.get("importe_exento") is not None:
+        fila["Exento"] = datos["importe_exento"]
+    if datos.get("importe_percepciones") is not None:
+        fila["Percep. Ingresos Brutos"] = datos["importe_percepciones"]
     return fila
 
 
@@ -2151,26 +2183,64 @@ def seccion_facturai():
                          disabled=not archivos, use_container_width=True)
 
     if procesar and archivos:
+        from src.facturai import vision as VISION
+        gemini_ok = VISION.hay_conexion()
+
         errores = []
-        with st.spinner(f"Buscando QR en {len(archivos)} archivo(s)…"):
+        with st.spinner(f"Procesando {len(archivos)} archivo(s)…"):
             for arch in archivos:
-                res = QR.procesar_archivo(arch.getvalue())
-                if not res.get("ok"):
-                    errores.append((arch.name, res.get("error", "Sin QR detectado")))
+                datos = None
+                fuente = None
+                nombre = arch.name
+
+                # 1) Intentar leer el QR primero (es 100% oficial y no consume API).
+                res_qr = QR.procesar_archivo(arch.getvalue())
+                if res_qr.get("ok"):
+                    datos = res_qr["datos"]
+                    fuente = "QR"
+
+                # 2) Si no hay QR y Gemini está configurado, mandar a Vision.
+                if datos is None and gemini_ok:
+                    try:
+                        # Si vino PDF, usamos la primera página como imagen
+                        img_bytes = res_qr.get("imagen_preview") or arch.getvalue()
+                        raw = VISION.extraer_datos(img_bytes)
+                        datos = VISION.a_formato_qr(raw)
+                        fuente = "Vision"
+                    except Exception as exc:  # noqa: BLE001
+                        errores.append((nombre, f"Gemini falló: {exc}"))
+                        continue
+
+                if datos is None:
+                    motivo = res_qr.get("error", "Sin QR y Vision no configurado.")
+                    errores.append((nombre, motivo))
                     continue
-                datos = res["datos"]
-                # Chequeo de duplicados (mismo CAE)
+
+                # 3) Duplicados: por CAE si lo hay, sino por CUIT + punto vta + número.
                 cae = str(datos.get("codigo_autorizacion") or "")
-                if cae and any(str(d.get("codigo_autorizacion") or "") == cae
-                               for d in st.session_state["facturai_datos"]):
-                    errores.append((arch.name, "Ya estaba cargada (mismo CAE)"))
+                clave = cae or f"{datos.get('cuit_emisor')}-{datos.get('punto_venta')}-{datos.get('numero')}"
+                claves = {
+                    (str(d.get("codigo_autorizacion") or "")
+                     or f"{d.get('cuit_emisor')}-{d.get('punto_venta')}-{d.get('numero')}")
+                    for d in st.session_state["facturai_datos"]
+                }
+                if clave in claves:
+                    errores.append((nombre, f"Duplicada — ya estaba cargada ({fuente})"))
                     continue
+
                 st.session_state["facturai_datos"].append(datos)
                 st.session_state["facturai_lista"].append(_facturai_fila(datos))
+
         if errores:
             with st.expander(f"⚠️ {len(errores)} archivo(s) no se procesaron", expanded=True):
                 for nombre, motivo in errores:
                     st.write(f"• **{nombre}**: {motivo}")
+
+        if not gemini_ok:
+            st.caption("💡 Tip: si configurás una API key gratuita de Gemini en "
+                       "`st.secrets['gemini']['api_key']`, las facturas sin QR "
+                       "(tickets fiscales viejos, papel muy borroso) se leen "
+                       "automáticamente con IA de visión.")
 
     # Tabla acumulada
     lista = st.session_state["facturai_lista"]
@@ -2185,12 +2255,12 @@ def seccion_facturai():
     vista = pd.DataFrame([{
         "Fecha": f["Fecha"],
         "Tipo": f["Tipo"],
-        "CUIT emisor": QR.formato_cuit(f["Nro. Doc. Vendedor"]),
-        "Pto Vta - Nro": f"{str(f['Punto de Venta']).zfill(5)}-{str(f['Número']).zfill(8)}"
+        "Emisor": f["Denominación Vendedor"] or QR.formato_cuit(f["Nro. Doc. Vendedor"]),
+        "CUIT": QR.formato_cuit(f["Nro. Doc. Vendedor"]),
+        "Comprobante": f"{str(f['Punto de Venta']).zfill(5)}-{str(f['Número']).zfill(8)}"
                         if f["Punto de Venta"] and f["Número"] else "",
         "Importe": f["Importe Total"],
-        "Moneda": f["Moneda"],
-        "CAE": f["CAE"],
+        "Origen": f["Origen"],
     } for f in lista])
     st.dataframe(
         vista, use_container_width=True, hide_index=True,
@@ -2221,11 +2291,10 @@ def seccion_facturai():
     with st.expander("Ver JSON de la última factura cargada"):
         st.json(st.session_state["facturai_datos"][-1])
 
-    st.caption("**Nota**: el QR de AFIP trae los datos oficiales (CUIT, tipo, número, "
-               "fecha, importe total, CAE) pero NO trae razón social ni el desglose "
-               "de netos por alícuota / IVA. Esos campos quedan vacíos por ahora — "
-               "en la próxima fase los completamos con Claude Vision para las facturas "
-               "que lo tengan legible.")
+    st.caption("**Origen** de cada fila: **QR** = leído del código QR de AFIP "
+               "(oficial, sin desglose de netos). **Vision** = leído por Gemini "
+               "cuando no hay QR o no se pudo decodificar (trae razón social, "
+               "neto e IVA discriminados).")
 
 
 # --------------------------------------------------------------------------- #
