@@ -274,17 +274,22 @@ def normalizar_portal_iva(csv_bytes):
         iva = _num_ar(f[_COL_TOTAL_IVA])
         perc = sum(_num_ar(f[c]) for c in _COL_PERCEPCIONES)
         calc = round(neto_grav + neto_iva0 + no_grav_n + exento + iva + perc, 2)
-        dif = round(total - calc, 2)
-        if abs(dif) > _TOLERANCIA:
-            descuadres.append({
-                "fila": i,
-                "fecha": str(f[_COL_FECHA] or "").strip(),
-                "cuit": cuit,
-                "denominacion": str(f[_COL_DENOMINACION] or "").strip(),
-                "total": total,
-                "calculado": calc,
-                "diferencia": dif,
-            })
+        # Si calc == 0 y el total no, la fila NO tiene desglose para validar
+        # (típico de facturas B/C a consumidor final: solo viene el Total y el
+        # resto de columnas en cero). No es un descuadre, es una fila sin data
+        # para chequear — la dejamos pasar.
+        if abs(calc) > _TOLERANCIA:
+            dif = round(total - calc, 2)
+            if abs(dif) > _TOLERANCIA:
+                descuadres.append({
+                    "fila": i,
+                    "fecha": str(f[_COL_FECHA] or "").strip(),
+                    "cuit": cuit,
+                    "denominacion": str(f[_COL_DENOMINACION] or "").strip(),
+                    "total": total,
+                    "calculado": calc,
+                    "diferencia": dif,
+                })
 
         filas_out.append(f)
 
