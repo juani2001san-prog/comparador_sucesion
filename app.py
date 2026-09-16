@@ -2192,73 +2192,96 @@ def seccion_facturai():
             cae = str(datos.get("codigo_autorizacion") or "")
             return cae or f"{datos.get('cuit_emisor')}-{datos.get('punto_venta')}-{datos.get('numero')}"
 
-        with st.spinner(f"Procesando {len(archivos)} archivo(s)…"):
-            for arch in archivos:
-                nombre_arch = arch.name
-                data = arch.getvalue()
+        # Barra de progreso: total = suma de páginas de todos los archivos.
+        total_paginas = 0
+        for arch in archivos:
+            d = arch.getvalue()
+            if d[:4] == b"%PDF":
+                try:
+                    total_paginas += QR.pdf_paginas(d)
+                except Exception:  # noqa: BLE001
+                    total_paginas += 1
+            else:
+                total_paginas += 1
+        barra = st.progress(0.0, text="Preparando…")
+        procesadas = 0
 
-                # Expandir PDF a lista de imágenes; imagen suelta queda como una.
-                if data[:4] == b"%PDF":
+        for arch in archivos:
+            nombre_arch = arch.name
+            data = arch.getvalue()
+
+            # PDF: iteramos página por página con un generador (no cargamos
+            # todas las páginas en memoria a la vez — el proceso se cae si
+            # el PDF tiene 20+ páginas escaneadas en resolución alta).
+            if data[:4] == b"%PDF":
+                try:
+                    iter_paginas = QR.pdf_a_imagenes(data)
+                    total_pag_este_pdf = QR.pdf_paginas(data)
+                except Exception as exc:  # noqa: BLE001
+                    errores.append((nombre_arch, f"PDF ilegible: {exc}"))
+                    procesadas += 1
+                    continue
+            else:
+                iter_paginas = iter([data])
+                total_pag_este_pdf = 1
+
+            for i, img_bytes in enumerate(iter_paginas, start=1):
+                nombre_pag = (nombre_arch if total_pag_este_pdf == 1
+                              else f"{nombre_arch} · pág {i}/{total_pag_este_pdf}")
+                barra.progress(procesadas / max(total_paginas, 1),
+                               text=f"Procesando {nombre_pag}…")
+
+                facturas_encontradas: list[dict] = []
+
+                # 1) Intentar QR primero — es oficial, no consume API.
+                try:
+                    url = QR.detectar_qr_en_imagen(img_bytes)
+                except Exception:  # noqa: BLE001
+                    url = None
+                if url:
+                    d = QR.parsear_url_afip(url)
+                    if d:
+                        facturas_encontradas.append(d)
+
+                # 2) Si no encontró nada por QR, cae a Gemini Vision
+                #    (una imagen puede tener varios comprobantes: Vision los
+                #    devuelve todos como lista).
+                if not facturas_encontradas:
+                    if not gemini_ok:
+                        errores.append((nombre_pag,
+                                       "Sin QR y Gemini no configurado."))
+                        procesadas += 1
+                        continue
                     try:
-                        imagenes = QR.pdf_a_imagenes(data)
+                        raws = VISION.extraer_datos(img_bytes)
+                        for raw in raws:
+                            facturas_encontradas.append(VISION.a_formato_qr(raw))
                     except Exception as exc:  # noqa: BLE001
-                        errores.append((nombre_arch, f"PDF ilegible: {exc}"))
+                        errores.append((nombre_pag, f"Gemini: {exc}"))
+                        procesadas += 1
                         continue
-                    if not imagenes:
-                        errores.append((nombre_arch, "El PDF no tiene páginas."))
-                        continue
-                else:
-                    imagenes = [data]
-
-                for i, img_bytes in enumerate(imagenes, start=1):
-                    nombre_pag = (nombre_arch if len(imagenes) == 1
-                                  else f"{nombre_arch} · pág {i}")
-
-                    facturas_encontradas: list[dict] = []
-
-                    # 1) Intentar QR primero — es oficial, no consume API.
-                    try:
-                        url = QR.detectar_qr_en_imagen(img_bytes)
-                    except Exception:  # noqa: BLE001
-                        url = None
-                    if url:
-                        d = QR.parsear_url_afip(url)
-                        if d:
-                            facturas_encontradas.append(d)
-
-                    # 2) Si no encontró nada por QR, cae a Gemini Vision
-                    #    (una imagen puede tener varios comprobantes: Vision los
-                    #    devuelve todos como lista).
                     if not facturas_encontradas:
-                        if not gemini_ok:
-                            errores.append((nombre_pag,
-                                           "Sin QR y Gemini no configurado."))
-                            continue
-                        try:
-                            raws = VISION.extraer_datos(img_bytes)
-                            for raw in raws:
-                                facturas_encontradas.append(VISION.a_formato_qr(raw))
-                        except Exception as exc:  # noqa: BLE001
-                            errores.append((nombre_pag, f"Gemini: {exc}"))
-                            continue
-                        if not facturas_encontradas:
-                            errores.append((nombre_pag,
-                                           "No se detectó ninguna factura."))
-                            continue
+                        errores.append((nombre_pag,
+                                       "No se detectó ninguna factura."))
+                        procesadas += 1
+                        continue
 
-                    # 3) Agregar cada factura encontrada, chequeando duplicados.
-                    for datos in facturas_encontradas:
-                        clave = _clave(datos)
-                        claves_existentes = {_clave(d)
-                                             for d in st.session_state["facturai_datos"]}
-                        if clave in claves_existentes:
-                            fuente = "Vision" if datos.get("fuente") == "gemini" else "QR"
-                            errores.append((nombre_pag,
-                                           f"Duplicada — ya estaba cargada ({fuente})"))
-                            continue
-                        st.session_state["facturai_datos"].append(datos)
-                        st.session_state["facturai_lista"].append(_facturai_fila(datos))
+                # 3) Agregar cada factura encontrada, chequeando duplicados.
+                for datos in facturas_encontradas:
+                    clave = _clave(datos)
+                    claves_existentes = {_clave(d)
+                                         for d in st.session_state["facturai_datos"]}
+                    if clave in claves_existentes:
+                        fuente = "Vision" if datos.get("fuente") == "gemini" else "QR"
+                        errores.append((nombre_pag,
+                                       f"Duplicada — ya estaba cargada ({fuente})"))
+                        continue
+                    st.session_state["facturai_datos"].append(datos)
+                    st.session_state["facturai_lista"].append(_facturai_fila(datos))
 
+                procesadas += 1
+
+        barra.progress(1.0, text=f"Listo: {procesadas} página(s) procesadas.")
         if errores:
             with st.expander(f"⚠️ {len(errores)} caso(s) no se procesaron",
                              expanded=True):

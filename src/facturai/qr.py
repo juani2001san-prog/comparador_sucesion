@@ -236,16 +236,31 @@ def detectar_qr_en_imagen(image_bytes: bytes) -> str | None:
     return None
 
 
-def pdf_a_imagenes(pdf_bytes: bytes, dpi: int = 200) -> list[bytes]:
-    """Convierte cada página del PDF a PNG. Devuelve lista de bytes."""
+def pdf_a_imagenes(pdf_bytes: bytes, dpi: int = 150):
+    """
+    Generador: yield PNG bytes de cada página del PDF, una por vez.
+
+    Se usa como iterador para no cargar todas las páginas en memoria a la
+    vez — Streamlit Cloud solo tiene ~1 GB y un PDF con 20+ páginas
+    escaneadas en resolución alta lo rompe si se cargan todas juntas.
+
+    ``dpi=150`` es un buen balance: legible para QR/OCR sin explotar
+    la memoria. Bajar más si se sigue quedando corto.
+    """
     import fitz  # PyMuPDF
 
-    imagenes: list[bytes] = []
     with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
         for page in doc:
             pix = page.get_pixmap(dpi=dpi)
-            imagenes.append(pix.tobytes("png"))
-    return imagenes
+            yield pix.tobytes("png")
+
+
+def pdf_paginas(pdf_bytes: bytes) -> int:
+    """Cantidad de páginas de un PDF, sin renderizar nada."""
+    import fitz
+
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+        return doc.page_count
 
 
 def procesar_archivo(data: bytes) -> dict:
