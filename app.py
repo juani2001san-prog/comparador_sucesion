@@ -2162,12 +2162,19 @@ def _facturai_fila(datos: dict) -> dict:
     fila["Importe Exento"] = _fmt_num_ar(datos.get("importe_exento") or 0)
     fila["Crédito Fiscal Computable"] = "0"
     fila["Importe de Per. o Pagos a Cta. de Otros Imp. Nac."] = "0"
+    # Percepciones IIBB en su columna. Compatible con el campo viejo.
     fila["Importe de Percepciones de Ingresos Brutos"] = _fmt_num_ar(
-        datos.get("importe_percepciones") or 0)
+        datos.get("importe_percepciones_iibb")
+        or datos.get("importe_percepciones")
+        or 0)
     fila["Importe de Impuestos Municipales"] = "0"
     fila["Importe de Percepciones o Pagos a Cuenta de IVA"] = "0"
-    fila["Importe de Impuestos Internos"] = "0"
-    fila["Importe Otros Tributos"] = "0"
+    # ITC + IDC + otros impuestos internos → R (Impuestos Internos).
+    # Después la normalización del CSV los pasa a K (No Gravado) automáticamente.
+    fila["Importe de Impuestos Internos"] = _fmt_num_ar(
+        datos.get("importe_impuestos_internos") or 0)
+    fila["Importe Otros Tributos"] = _fmt_num_ar(
+        datos.get("importe_otros_tributos") or 0)
 
     # Netos e IVA por alícuota. Como Gemini reporta la alícuota predominante,
     # pongo neto+IVA en la columna que corresponde a esa alícuota.

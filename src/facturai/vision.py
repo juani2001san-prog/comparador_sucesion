@@ -55,7 +55,9 @@ Devolveme SOLO un JSON válido, sin markdown ni backticks, con esta estructura:
       "alicuota_iva": 21,
       "importe_no_gravado": 0,
       "importe_exento": 0,
-      "importe_percepciones": 0,
+      "importe_percepciones_iibb": 0,
+      "importe_impuestos_internos": 0,
+      "importe_otros_tributos": 0,
       "importe_total": 27000.00,
       "cae": "86349754031008",
       "moneda": "PES"
@@ -67,10 +69,29 @@ Códigos AFIP (codigo_tipo): 1=Fact A, 6=Fact B, 11=Fact C, 3/8/13=NC A/B/C,
 2/7/12=ND A/B/C, 81=Tique Fact A, 82=Tique Fact B, 111=Tique Fact C,
 51/52/53=Fact/ND/NC M, 4/9/15=Recibo A/B/C.
 
+CLASIFICACIÓN DE IMPUESTOS Y PERCEPCIONES — MUY IMPORTANTE:
+
+- **importe_percepciones_iibb**: SOLO las percepciones de INGRESOS BRUTOS
+  (típicamente aparecen como "Percep. IIBB", "Percepción IB", "IIBB",
+  "Ingresos Brutos" seguido de un porcentaje).
+- **importe_impuestos_internos**: los IMPUESTOS INTERNOS. Ejemplos típicos
+  en tickets de COMBUSTIBLES:
+    · ITC (Impuesto a la Transferencia de Combustibles).
+    · IDC (Impuesto al Dióxido de Carbono).
+    · Otros impuestos internos (art. 24, IIL, tabaco, etc.).
+  Estos NUNCA son percepciones — van a Impuestos Internos.
+- **importe_otros_tributos**: cualquier otro tributo que no encaja en las
+  categorías anteriores (impuestos municipales, tasas, contribuciones).
+
+Ejemplo concreto de un ticket de nafta con importes:
+  ITC: 3911,45  →  importe_impuestos_internos suma 3911.45
+  IDC: 445,81   →  importe_impuestos_internos suma 445.81
+  (no hay percepciones IIBB en este ticket → importe_percepciones_iibb = 0)
+
 Reglas:
 - Devolvé SIEMPRE la clave 'facturas' con un array (aunque haya solo un comprobante).
-- Si la imagen tiene VARIAS facturas visibles (por ejemplo tickets pegados uno
-  al lado del otro en un scan), listalas todas — una por elemento del array.
+- Si la imagen tiene VARIAS facturas visibles (tickets pegados uno al lado
+  del otro en un scan), listalas todas — una por elemento del array.
 - Los importes son números decimales con PUNTO decimal (no coma). Sin símbolo $.
 - Si un campo no aparece o no es legible, devolvé null.
 - Si un ticket B o C no discrimina IVA, importe_iva puede ser 0 y neto = total.
@@ -195,6 +216,12 @@ def a_formato_qr(datos_vision: dict) -> dict:
         "alicuota_iva": datos_vision.get("alicuota_iva"),
         "importe_no_gravado": datos_vision.get("importe_no_gravado"),
         "importe_exento": datos_vision.get("importe_exento"),
-        "importe_percepciones": datos_vision.get("importe_percepciones"),
+        # Compatibilidad con respuestas viejas del prompt anterior.
+        "importe_percepciones_iibb": (
+            datos_vision.get("importe_percepciones_iibb")
+            or datos_vision.get("importe_percepciones")
+        ),
+        "importe_impuestos_internos": datos_vision.get("importe_impuestos_internos"),
+        "importe_otros_tributos": datos_vision.get("importe_otros_tributos"),
         "fuente": "gemini",
     }
