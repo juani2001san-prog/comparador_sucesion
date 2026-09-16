@@ -1040,11 +1040,22 @@ def seccion_afip():
 
     c1, c2 = st.columns(2)
     with c1:
-        up_csv = st.file_uploader("Archivo de AFIP (.csv, .xlsx o .xls)",
-                                  type=["csv", "xlsx", "xls"], key="afip_csv")
+        up_csv = st.file_uploader("Archivo a procesar (.csv, .xlsx o .xls)",
+                                  type=["csv", "xlsx", "xls"], key="afip_csv",
+                                  help="Podés subir el CSV de ARCA (Portal IVA) "
+                                       "o un CSV generado por Facturas por foto.")
     with c2:
         up_maestro = st.file_uploader("Excel maestro (Proveedores/Rubros) (.xlsx)",
                                       type=["xlsx"], key="afip_maestro")
+
+    up_excluir = st.file_uploader(
+        "🔍 CSV con lo que YA cargaste en JWIN — opcional, para excluir duplicados",
+        type=["csv"], key="afip_excluir",
+        help="Si ya importaste un CSV a JWIN y ahora querés subir SOLO lo que "
+             "falta, subilo acá. La app compara y saca del CSV a descargar "
+             "todos los comprobantes que ya estén en éste (match por CAE, o "
+             "por CUIT + fecha + importe con tolerancia $0,05).",
+    )
 
     with st.expander("¿No tenés el Excel maestro? Descargá una plantilla para empezar"):
         st.caption(
@@ -1171,12 +1182,39 @@ def seccion_afip():
             # Reprocesar con los rubros recién cargados.
             encab, filas, desconocidos, stats, rubros = AJ.procesar(csv_bytes, maestro_bytes, extra)
 
-    m1, m2, m3 = st.columns(3)
+    # ----------------------------------------------------------------- #
+    # Excluir los comprobantes que YA se cargaron a JWIN (dedup opcional)
+    # ----------------------------------------------------------------- #
+    excluidos_por_dedup = 0
+    if up_excluir is not None:
+        try:
+            filas_excluir_indices = _detectar_duplicados_excluir(
+                encab, filas, up_excluir.getvalue())
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"No se pudo leer el CSV a excluir: {exc}")
+        else:
+            if filas_excluir_indices:
+                excluidos_por_dedup = len(filas_excluir_indices)
+                filas = [f for i, f in enumerate(filas)
+                         if i not in filas_excluir_indices]
+                st.info(f"🔍 Se excluyeron **{excluidos_por_dedup}** comprobante(s) "
+                        "que ya estaban en el CSV a excluir. Solo quedan los que "
+                        "faltan cargar en JWIN.")
+                # Recalcular stats (asignados/sin_rubro/comprobantes) con la lista filtrada
+                asignados_nuevo = sum(1 for f in filas if str(f[-1]).strip())
+                stats["comprobantes"] = len(filas)
+                stats["asignados"] = asignados_nuevo
+                stats["sin_rubro"] = len(filas) - asignados_nuevo
+            else:
+                st.success("No hay comprobantes duplicados con el CSV a excluir.")
+
+    m1, m2, m3, m4 = st.columns(4)
     m1.metric("Comprobantes", stats["comprobantes"])
     m2.metric("Con rubro", stats["asignados"])
     m3.metric("Sin rubro", stats["sin_rubro"])
+    m4.metric("Excluidos (dedup)", excluidos_por_dedup)
 
-    if stats["sin_rubro"] == 0:
+    if stats["sin_rubro"] == 0 and stats["comprobantes"] > 0:
         st.success("Todos los comprobantes quedaron con su rubro. 🎉")
 
     with st.expander("Ver tabla (CUIT, emisor, rubro)"):
@@ -2163,6 +2201,101 @@ def _facturai_fila(datos: dict) -> dict:
     fila["CAE"] = str(datos.get("codigo_autorizacion") or "")
     fila["Origen"] = "Vision" if datos.get("fuente") == "gemini" else "QR"
     return fila
+
+
+def _detectar_duplicados_excluir(encab: list, filas: list, csv_excluir_bytes: bytes) -> set[int]:
+    """
+    Devuelve el set de índices de ``filas`` (post-procesar) que ya están en
+    el CSV a excluir. Usa la misma regla que ``_detectar_duplicados_arca``:
+    match por CAE si hay, o por CUIT + fecha + importe (tolerancia 0,05).
+
+    ``encab`` y ``filas`` vienen de ``AJ.procesar`` — layout ARCA + Rubro.
+    """
+    import csv as _csv
+    import io as _io
+
+    try:
+        texto = csv_excluir_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        texto = csv_excluir_bytes.decode("latin-1")
+
+    filas_arca = list(_csv.reader(_io.StringIO(texto), delimiter=";"))
+    if not filas_arca:
+        return set()
+
+    header_arca = [str(h).strip().lower() for h in filas_arca[0]]
+
+    def _idx(hdr, *claves):
+        for k in claves:
+            k = k.lower()
+            for i, h in enumerate(hdr):
+                if k in h:
+                    return i
+        return None
+
+    # Índices en el CSV a excluir
+    x_fecha = _idx(header_arca, "fecha de emisi", "fecha")
+    x_cuit = _idx(header_arca, "nro. doc. vendedor", "nro doc vendedor", "nro. doc")
+    x_total = _idx(header_arca, "importe total")
+    x_cae = _idx(header_arca, "cae", "cod. autorizaci")
+
+    # Índices en las filas a filtrar (usan el encab de AJ.procesar)
+    e_lower = [str(h).strip().lower() for h in encab]
+    f_fecha = _idx(e_lower, "fecha de emisi", "fecha")
+    f_cuit = _idx(e_lower, "nro. doc. vendedor", "nro. doc. emisor", "nro doc")
+    f_total = _idx(e_lower, "importe total")
+    f_cae = _idx(e_lower, "cae", "cod. autorizaci")
+
+    if x_cuit is None or x_total is None or f_cuit is None or f_total is None:
+        return set()
+
+    def _num(s):
+        s = str(s or "").strip()
+        if not s:
+            return 0.0
+        if "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        try:
+            return float(s)
+        except ValueError:
+            return 0.0
+
+    def _cuit_d(s):
+        return "".join(c for c in str(s or "") if c.isdigit())
+
+    caes_excluir: set[str] = set()
+    claves_excluir: set[tuple[str, str, float]] = set()
+    for fila in filas_arca[1:]:
+        if not fila or len(fila) <= max(x_cuit, x_total):
+            continue
+        cuit = _cuit_d(fila[x_cuit])
+        if len(cuit) != 11:
+            continue
+        fecha = str(fila[x_fecha] or "").strip() if x_fecha is not None else ""
+        total = round(_num(fila[x_total]), 2)
+        claves_excluir.add((cuit, fecha, total))
+        if x_cae is not None and x_cae < len(fila):
+            cae = _cuit_d(fila[x_cae])
+            if cae:
+                caes_excluir.add(cae)
+
+    duplicados: set[int] = set()
+    for i, fila in enumerate(filas):
+        cuit = _cuit_d(fila[f_cuit] if f_cuit < len(fila) else "")
+        if len(cuit) != 11:
+            continue
+        # 1) Chequear CAE si está
+        if f_cae is not None and f_cae < len(fila):
+            cae = _cuit_d(fila[f_cae])
+            if cae and cae in caes_excluir:
+                duplicados.add(i)
+                continue
+        # 2) Chequear por CUIT + fecha + importe
+        fecha = str(fila[f_fecha] or "").strip() if f_fecha is not None else ""
+        total = round(_num(fila[f_total]), 2)
+        if (cuit, fecha, total) in claves_excluir:
+            duplicados.add(i)
+    return duplicados
 
 
 def _cargar_facturai_csv(csv_bytes: bytes):
