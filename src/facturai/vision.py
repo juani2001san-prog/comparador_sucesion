@@ -106,9 +106,25 @@ Reglas:
   del otro en un scan), listalas todas — una por elemento del array.
 - Los importes son números decimales con PUNTO decimal (no coma). Sin símbolo $.
 - Si un campo no aparece o no es legible, devolvé null.
-- Si un ticket B o C no discrimina IVA, importe_iva puede ser 0 y neto = total.
 - El CUIT emisor es SIEMPRE quien emite (arriba del ticket), no el receptor.
-- Devolvé exclusivamente el JSON, nada más.
+
+FACTURAS A (código 1, 2, 3) - MUY IMPORTANTE:
+- Las Facturas A SIEMPRE discriminan Neto Gravado + IVA. NUNCA devuelvas
+  importe_neto_gravado=0 e importe_iva=0 en una Factura A que tenga total.
+- Si el desglose no se ve claro en la imagen pero SÍ ves el importe total
+  y la alícuota, CALCULÁ los valores tú:
+    importe_neto_gravado = importe_total / (1 + alicuota/100)
+    importe_iva = importe_total - importe_neto_gravado
+  Ejemplo: Factura A al 21%, total 45000. Entonces:
+    importe_neto_gravado = 45000 / 1.21 = 37190.08
+    importe_iva = 45000 - 37190.08 = 7809.92
+- Si no se ve la alícuota, asumí 21% (la más común).
+
+TICKETS B (81, 82) y C (11, 111) - MUY IMPORTANTE:
+- Los tickets a consumidor final NO discriminan IVA en el ticket.
+- Para estos, importe_iva puede ser 0 y importe_neto_gravado = importe_total.
+
+Devolvé exclusivamente el JSON, nada más.
 """
 
 
