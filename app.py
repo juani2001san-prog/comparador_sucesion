@@ -2055,75 +2055,132 @@ def seccion_iva():
 # Sección: Facturas por foto (lectura de QR de AFIP)
 # --------------------------------------------------------------------------- #
 
-# Layout del CSV Portal IVA (mismo que ya normaliza afip_jwin.py). Al bajar el
-# Excel dejamos vacías las columnas que el QR no trae (netos por alícuota, IVA,
-# etc.) — el usuario las completa después con LLM Vision (fase 2) o a mano.
-_FACTURAI_COLUMNAS = [
-    "Fecha", "Tipo", "Punto de Venta", "Número", "Tipo Doc. Vendedor",
-    "Nro. Doc. Vendedor", "Denominación Vendedor", "Importe Total",
-    "Moneda", "Cotización",
-    "No Gravado", "Exento", "Crédito Fiscal", "Percep. Otros Imp. Nac.",
-    "Percep. Ingresos Brutos", "Impuestos Municipales", "Percep. IVA",
-    "Impuestos Internos", "Otros Tributos",
-    "Neto Grav. IVA 0%",
-    "Neto Grav. IVA 2,5%", "IVA 2,5%",
-    "Neto Grav. IVA 5%",   "IVA 5%",
-    "Neto Grav. IVA 10,5%", "IVA 10,5%",
-    "Neto Grav. IVA 21%",   "IVA 21%",
-    "Neto Grav. IVA 27%",   "IVA 27%",
-    "Total Neto Gravado", "Total IVA",
-    "CAE", "Origen",
-]
+# Layout de salida = exactamente el que ARCA usa en el Portal IVA (Compras),
+# tal cual lo importa JWIN por posición de columna. Se reutiliza la constante
+# de afip_jwin para no duplicar y para que si ARCA cambia el layout, se cambia
+# en un solo lugar.
+from src.afip_jwin import HEADER_PORTAL_IVA as _COLS_ARCA
+_FACTURAI_COLUMNAS = list(_COLS_ARCA) + ["CAE", "Origen"]
+
+
+def _fmt_fecha_ar(iso: str) -> str:
+    """'2026-08-24' → '24/08/2026'. Devuelve la fecha original si no matchea."""
+    if not iso or not isinstance(iso, str):
+        return iso or ""
+    try:
+        y, m, d = iso[:10].split("-")
+        return f"{int(d):02d}/{int(m):02d}/{y}"
+    except (ValueError, IndexError):
+        return iso
+
+
+def _fmt_num_ar(v) -> str:
+    """
+    123.45 → '123,45', 0 → '0', '' → '0'. Formato ARCA (coma decimal).
+    Se emite como texto para preservar el mismo output que trae ARCA.
+    """
+    if v is None or v == "":
+        return "0"
+    try:
+        r = round(float(v), 2)
+    except (TypeError, ValueError):
+        return str(v)
+    if r == 0:
+        return "0"
+    return f"{r:.2f}".replace(".", ",")
+
+
+def _fmt_codigo_tipo(codigo) -> str:
+    """Devuelve el código del tipo de comprobante como string ('1', '6', '11', '81'...)."""
+    if codigo is None or codigo == "":
+        return ""
+    try:
+        return str(int(codigo))
+    except (TypeError, ValueError):
+        return str(codigo)
 
 
 def _facturai_fila(datos: dict) -> dict:
     """
-    Convierte los datos de un comprobante (venga del QR o de Gemini Vision)
-    a una fila del layout Portal IVA. Los campos que solo trae Gemini
-    (razón social, netos, IVA, alícuota) se completan cuando existan.
+    Convierte los datos de un comprobante (QR o Gemini Vision) a una fila con
+    el layout EXACTO del CSV que emite el Portal IVA de ARCA. Formato:
+    fechas dd/mm/aaaa, decimales con coma, tipo de comprobante como código
+    numérico. Así el archivo se puede subir directo a AFIP → JWIN sin tocar.
     """
     fila = {c: "" for c in _FACTURAI_COLUMNAS}
-    fila["Fecha"] = datos.get("fecha") or ""
-    fila["Tipo"] = f"{datos.get('tipo_comprobante_codigo') or ''} - {datos.get('tipo_comprobante') or ''}".strip(" -")
-    fila["Punto de Venta"] = datos.get("punto_venta") or ""
-    fila["Número"] = datos.get("numero") or ""
-    fila["Tipo Doc. Vendedor"] = "80 - CUIT"
-    fila["Nro. Doc. Vendedor"] = datos.get("cuit_emisor") or ""
-    fila["Denominación Vendedor"] = datos.get("razon_social_emisor") or ""
-    fila["Importe Total"] = datos.get("importe_total") or 0
-    fila["Moneda"] = datos.get("moneda") or ""
-    fila["Cotización"] = datos.get("cotizacion") or ""
-    fila["CAE"] = str(datos.get("codigo_autorizacion") or "")
-    fila["Origen"] = "Vision" if datos.get("fuente") == "gemini" else "QR"
 
-    # Netos por alícuota (solo si vinieron de Vision)
+    fila["Fecha de Emisión"] = _fmt_fecha_ar(datos.get("fecha") or "")
+    fila["Tipo de Comprobante"] = _fmt_codigo_tipo(datos.get("tipo_comprobante_codigo"))
+    fila["Punto de Venta"] = str(datos.get("punto_venta") or "")
+    fila["Número de Comprobante"] = str(datos.get("numero") or "")
+    fila["Tipo Doc. Vendedor"] = "80"
+    fila["Nro. Doc. Vendedor"] = str(datos.get("cuit_emisor") or "")
+    fila["Denominación Vendedor"] = datos.get("razon_social_emisor") or ""
+    fila["Importe Total"] = _fmt_num_ar(datos.get("importe_total"))
+    fila["Moneda Original"] = datos.get("moneda") or "PES"
+    fila["Tipo de Cambio"] = _fmt_num_ar(datos.get("cotizacion") or 1)
+
+    fila["Importe No Gravado"] = _fmt_num_ar(datos.get("importe_no_gravado") or 0)
+    fila["Importe Exento"] = _fmt_num_ar(datos.get("importe_exento") or 0)
+    fila["Crédito Fiscal Computable"] = "0"
+    fila["Importe de Per. o Pagos a Cta. de Otros Imp. Nac."] = "0"
+    fila["Importe de Percepciones de Ingresos Brutos"] = _fmt_num_ar(
+        datos.get("importe_percepciones") or 0)
+    fila["Importe de Impuestos Municipales"] = "0"
+    fila["Importe de Percepciones o Pagos a Cuenta de IVA"] = "0"
+    fila["Importe de Impuestos Internos"] = "0"
+    fila["Importe Otros Tributos"] = "0"
+
+    # Netos e IVA por alícuota. Como Gemini reporta la alícuota predominante,
+    # pongo neto+IVA en la columna que corresponde a esa alícuota.
     neto = datos.get("importe_neto_gravado")
     iva = datos.get("importe_iva")
     alicuota = datos.get("alicuota_iva")
-    if neto is not None:
-        fila["Total Neto Gravado"] = neto
-        # Si sabemos la alícuota principal, ponemos el neto e IVA en la columna correcta
-        alic_map = {0: ("Neto Grav. IVA 0%", None),
-                    2.5: ("Neto Grav. IVA 2,5%", "IVA 2,5%"),
-                    5: ("Neto Grav. IVA 5%", "IVA 5%"),
-                    10.5: ("Neto Grav. IVA 10,5%", "IVA 10,5%"),
-                    21: ("Neto Grav. IVA 21%", "IVA 21%"),
-                    27: ("Neto Grav. IVA 27%", "IVA 27%")}
-        columnas_alic = alic_map.get(alicuota)
-        if columnas_alic:
-            col_neto, col_iva = columnas_alic
-            fila[col_neto] = neto
-            if col_iva and iva is not None:
-                fila[col_iva] = iva
-    if iva is not None:
-        fila["Total IVA"] = iva
-    if datos.get("importe_no_gravado") is not None:
-        fila["No Gravado"] = datos["importe_no_gravado"]
-    if datos.get("importe_exento") is not None:
-        fila["Exento"] = datos["importe_exento"]
-    if datos.get("importe_percepciones") is not None:
-        fila["Percep. Ingresos Brutos"] = datos["importe_percepciones"]
+    alic_map = {
+        0: ("Neto Gravado IVA 0%", None),
+        2.5: ("Neto Gravado IVA 2,5%", "Importe IVA 2,5%"),
+        5: ("Neto Gravado IVA 5%", "Importe IVA 5%"),
+        10.5: ("Neto Gravado IVA 10,5%", "Importe IVA 10,5%"),
+        21: ("Neto Gravado IVA 21%", "Importe IVA 21%"),
+        27: ("Neto Gravado IVA 27%", "Importe IVA 27%"),
+    }
+    # Todos los importes por alícuota arrancan en "0"
+    for col_neto, col_iva in alic_map.values():
+        fila[col_neto] = "0"
+        if col_iva:
+            fila[col_iva] = "0"
+    if neto is not None and alicuota is not None and alicuota in alic_map:
+        col_neto, col_iva = alic_map[alicuota]
+        fila[col_neto] = _fmt_num_ar(neto)
+        if col_iva and iva is not None:
+            fila[col_iva] = _fmt_num_ar(iva)
+
+    fila["Total Neto Gravado"] = _fmt_num_ar(neto or 0)
+    fila["Total IVA"] = _fmt_num_ar(iva or 0)
+
+    # Extras al final (no rompen la importación por posición porque son
+    # columnas 33 y 34, después de las 32 estándar del Portal IVA).
+    fila["CAE"] = str(datos.get("codigo_autorizacion") or "")
+    fila["Origen"] = "Vision" if datos.get("fuente") == "gemini" else "QR"
     return fila
+
+
+def _facturai_a_csv(facturas: list[dict]) -> bytes:
+    """
+    CSV con el layout exacto del Portal IVA (';' + coma decimal + CRLF + BOM
+    UTF-8). Se puede subir directo en la sección AFIP → JWIN con rubros.
+    """
+    import csv as _csv
+    import io as _io
+
+    buf = _io.StringIO()
+    w = _csv.writer(buf, delimiter=";", lineterminator="\r\n")
+    # Solo las 32 columnas estándar. CAE y Origen quedan para el Excel de vista.
+    encab = list(_COLS_ARCA)
+    w.writerow(encab)
+    for f in facturas:
+        w.writerow([f.get(c, "") for c in encab])
+    return buf.getvalue().encode("utf-8-sig")
 
 
 def _facturai_a_excel(facturas: list[dict]) -> bytes:
@@ -2323,19 +2380,33 @@ def seccion_facturai():
     total = sum(float(f["Importe Total"] or 0) for f in lista)
     st.caption(f"Suma total de importes cargados: **${total:,.2f}**")
 
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
-        excel = _facturai_a_excel(lista)
+        csv_bytes = _facturai_a_csv(lista)
         c1.download_button(
-            "⬇️ Descargar Excel con todo",
+            "⬇️ CSV para AFIP → JWIN",
+            data=csv_bytes,
+            file_name=f"Facturas_procesadas_{datetime.now():%Y%m%d_%H%M}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="facturai_dl_csv",
+            help="CSV con el mismo layout que el Portal IVA de ARCA. Se puede "
+                 "subir directo en la sección 'AFIP → JWIN con rubros'.",
+        )
+    with c2:
+        excel = _facturai_a_excel(lista)
+        c2.download_button(
+            "⬇️ Excel (para revisar)",
             data=excel,
             file_name=f"Facturas_procesadas_{datetime.now():%Y%m%d_%H%M}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
-            key="facturai_dl",
+            key="facturai_dl_xlsx",
+            help="Excel con las 32 columnas de ARCA + CAE + Origen (QR/Vision). "
+                 "Útil para revisar antes de importar a JWIN.",
         )
-    with c2:
-        if c2.button("🗑️ Vaciar lista", use_container_width=True, key="facturai_clear"):
+    with c3:
+        if c3.button("🗑️ Vaciar lista", use_container_width=True, key="facturai_clear"):
             st.session_state["facturai_lista"] = []
             st.session_state["facturai_datos"] = []
             st.rerun()

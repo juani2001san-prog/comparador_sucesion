@@ -32,7 +32,7 @@ from datetime import date, datetime
 # El layout está atado al encabezado actual del Portal IVA (32 columnas). Si
 # cambia, validar_encabezado_portal_iva() lo detecta y frena el proceso.
 
-_HEADER_PORTAL_IVA = [
+HEADER_PORTAL_IVA = [
     "Fecha de Emisión", "Tipo de Comprobante", "Punto de Venta",
     "Número de Comprobante", "Tipo Doc. Vendedor", "Nro. Doc. Vendedor",
     "Denominación Vendedor", "Importe Total", "Moneda Original", "Tipo de Cambio",
@@ -87,7 +87,7 @@ def es_csv_portal_iva(csv_bytes):
     if not filas:
         return False
     encab = [_norm_cabecera(c) for c in filas[0]]
-    esperados = [_norm_cabecera(h) for h in _HEADER_PORTAL_IVA]
+    esperados = [_norm_cabecera(h) for h in HEADER_PORTAL_IVA]
     # Chequeo laxo: tienen que coincidir al menos las 5 primeras y las 3 clave.
     if encab[:5] != esperados[:5]:
         return False
@@ -100,7 +100,7 @@ def es_csv_portal_iva(csv_bytes):
 def _validar_encabezado(encab_original):
     """Compara el encabezado del CSV con el esperado. Devuelve lista de diferencias."""
     diffs = []
-    esperados_n = [_norm_cabecera(h) for h in _HEADER_PORTAL_IVA]
+    esperados_n = [_norm_cabecera(h) for h in HEADER_PORTAL_IVA]
     encab_n = [_norm_cabecera(c) for c in encab_original]
     if len(encab_n) < len(esperados_n):
         diffs.append(
@@ -112,7 +112,7 @@ def _validar_encabezado(encab_original):
             col_letra = _letra_columna(i)
             diffs.append(
                 f"Columna {col_letra} (posición {i+1}): se esperaba "
-                f"«{_HEADER_PORTAL_IVA[i]}» y vino «{encab_original[i]}»."
+                f"«{HEADER_PORTAL_IVA[i]}» y vino «{encab_original[i]}»."
             )
     return diffs
 
@@ -233,7 +233,7 @@ def normalizar_portal_iva(csv_bytes):
 
     for i, fila in enumerate(filas[1:], start=2):  # start=2 → número de fila real en el archivo
         # Extiendo si vino más corta (a veces ARCA corta cuando las últimas columnas son 0).
-        f = list(fila) + [""] * (len(_HEADER_PORTAL_IVA) - len(fila))
+        f = list(fila) + [""] * (len(HEADER_PORTAL_IVA) - len(fila))
 
         cuit = _cuit_valido(f[_COL_CUIT_VENDEDOR])
         if not cuit:
