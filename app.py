@@ -2165,6 +2165,101 @@ def _facturai_fila(datos: dict) -> dict:
     return fila
 
 
+def _detectar_duplicados_arca(datos_lista: list[dict], csv_arca_bytes: bytes) -> set[int]:
+    """
+    Cruza las facturas procesadas por Facturai contra un CSV de ARCA
+    (Portal IVA - Compras). Devuelve el set de índices que ya están en
+    ARCA y no habría que exportar de nuevo.
+
+    Regla de match:
+      1. Si el CAE coincide → duplicado seguro.
+      2. Si no hay CAE: CUIT emisor + fecha + importe total (tolerancia 0,05).
+    """
+    import csv as _csv
+    import io as _io
+
+    # Detectar encoding del CSV de ARCA
+    try:
+        texto = csv_arca_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        texto = csv_arca_bytes.decode("latin-1")
+
+    filas = list(_csv.reader(_io.StringIO(texto), delimiter=";"))
+    if not filas:
+        return set()
+
+    header = [str(h).strip().lower() for h in filas[0]]
+
+    def _idx(*claves):
+        for k in claves:
+            k = k.lower()
+            for i, h in enumerate(header):
+                if k in h:
+                    return i
+        return None
+
+    i_fecha = _idx("fecha de emisi", "fecha")
+    i_cuit = _idx("nro. doc. vendedor", "nro doc vendedor", "nro. doc")
+    i_total = _idx("importe total")
+    i_cae = _idx("cae", "cod. autorizaci", "cod autorizac")
+
+    if i_cuit is None or i_total is None:
+        return set()
+
+    def _num(s):
+        s = str(s or "").strip()
+        if not s:
+            return 0.0
+        if "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        try:
+            return float(s)
+        except ValueError:
+            return 0.0
+
+    def _cuit_digs(s):
+        return "".join(c for c in str(s or "") if c.isdigit())
+
+    caes_arca: set[str] = set()
+    claves_arca: set[tuple[str, str, float]] = set()   # (cuit, fecha, importe)
+    for fila in filas[1:]:
+        if not fila or len(fila) <= max(i_cuit, i_total):
+            continue
+        cuit = _cuit_digs(fila[i_cuit])
+        if len(cuit) != 11:
+            continue
+        fecha = str(fila[i_fecha] or "").strip() if i_fecha is not None else ""
+        total = round(_num(fila[i_total]), 2)
+        claves_arca.add((cuit, fecha, total))
+        if i_cae is not None and i_cae < len(fila):
+            cae = _cuit_digs(fila[i_cae])
+            if cae:
+                caes_arca.add(cae)
+
+    def _fecha_ar(iso):
+        try:
+            y, m, d = iso[:10].split("-")
+            return f"{int(d):02d}/{int(m):02d}/{y}"
+        except (ValueError, IndexError, AttributeError):
+            return iso
+
+    duplicados: set[int] = set()
+    for i, datos in enumerate(datos_lista):
+        cae = _cuit_digs(datos.get("codigo_autorizacion"))
+        if cae and cae in caes_arca:
+            duplicados.add(i)
+            continue
+        cuit = _cuit_digs(datos.get("cuit_emisor"))
+        fecha_ar = _fecha_ar(datos.get("fecha") or "")
+        try:
+            total = round(float(datos.get("importe_total") or 0), 2)
+        except (TypeError, ValueError):
+            continue
+        if (cuit, fecha_ar, total) in claves_arca:
+            duplicados.add(i)
+    return duplicados
+
+
 def _facturai_a_csv(facturas: list[dict]) -> bytes:
     """
     CSV con el layout exacto del Portal IVA (';' + coma decimal + CRLF + BOM
@@ -2335,6 +2430,7 @@ def seccion_facturai():
                         continue
                     st.session_state["facturai_datos"].append(datos)
                     st.session_state["facturai_lista"].append(_facturai_fila(datos))
+                    st.session_state.setdefault("facturai_incluir", []).append(True)
 
                 procesadas += 1
 
@@ -2360,25 +2456,87 @@ def seccion_facturai():
     st.divider()
     st.subheader(f"📋 Facturas acumuladas ({len(lista)})")
 
-    # Vista compacta con las columnas más útiles
-    vista = pd.DataFrame([{
-        "Fecha": f["Fecha"],
-        "Tipo": f["Tipo"],
+    # ---------------------------------------------------------------- #
+    # Cruce opcional con el CSV de ARCA: para no duplicar facturas
+    # electrónicas que ya vienen del Portal IVA en la baja mensual.
+    # ---------------------------------------------------------------- #
+    up_arca = st.file_uploader(
+        "CSV de ARCA (opcional): detecta duplicados con lo que ya bajaste del Portal IVA",
+        type=["csv"], key="facturai_arca_dedup",
+    )
+    dup_indices: set[int] = set()
+    if up_arca is not None:
+        try:
+            dup_indices = _detectar_duplicados_arca(
+                st.session_state["facturai_datos"], up_arca.getvalue()
+            )
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"No se pudo leer el CSV de ARCA: {exc}")
+        else:
+            if dup_indices:
+                st.info(f"🔍 Se detectaron **{len(dup_indices)}** factura(s) "
+                        "que ya están en el CSV de ARCA — vienen destildadas "
+                        "abajo. Chequealas y ajustá si querés.")
+            else:
+                st.success("No se detectó ningún cruce — todas las facturas "
+                           "procesadas son distintas a las que trae el CSV de ARCA.")
+
+    # Inicializo/ajusto la lista de "incluidos" en session_state.
+    if len(st.session_state.get("facturai_incluir", [])) != len(lista):
+        st.session_state["facturai_incluir"] = [True] * len(lista)
+    # Aplicar los duplicados detectados: quedan destildados por defecto,
+    # pero el usuario puede volver a tildarlos si quiere igual.
+    if up_arca is not None:
+        st.session_state["facturai_incluir"] = [
+            i not in dup_indices for i in range(len(lista))
+        ]
+
+    # Tabla editable con checkbox "Incluir"
+    vista_df = pd.DataFrame([{
+        "Incluir": st.session_state["facturai_incluir"][i],
+        "Fecha": f["Fecha de Emisión"],
+        "Tipo": f["Tipo de Comprobante"],
         "Emisor": f["Denominación Vendedor"] or QR.formato_cuit(f["Nro. Doc. Vendedor"]),
         "CUIT": QR.formato_cuit(f["Nro. Doc. Vendedor"]),
-        "Comprobante": f"{str(f['Punto de Venta']).zfill(5)}-{str(f['Número']).zfill(8)}"
-                        if f["Punto de Venta"] and f["Número"] else "",
+        "Comprobante": f"{str(f['Punto de Venta']).zfill(5)}-{str(f['Número de Comprobante']).zfill(8)}"
+                        if f["Punto de Venta"] and f["Número de Comprobante"] else "",
         "Importe": f["Importe Total"],
         "Origen": f["Origen"],
-    } for f in lista])
-    st.dataframe(
-        vista, use_container_width=True, hide_index=True,
+    } for i, f in enumerate(lista)])
+
+    editado = st.data_editor(
+        vista_df, use_container_width=True, hide_index=True,
+        key="facturai_editor_vista",
         column_config={
-            "Importe": st.column_config.NumberColumn(format="%.2f"),
+            "Incluir": st.column_config.CheckboxColumn(
+                "Incluir",
+                help="Destildá las filas que no querés exportar (duplicadas, "
+                     "cargadas mal, etc.)",
+                default=True,
+            ),
         },
+        disabled=[c for c in vista_df.columns if c != "Incluir"],
     )
-    total = sum(float(f["Importe Total"] or 0) for f in lista)
-    st.caption(f"Suma total de importes cargados: **${total:,.2f}**")
+    st.session_state["facturai_incluir"] = editado["Incluir"].tolist()
+
+    incluidas = [f for i, f in enumerate(lista)
+                 if st.session_state["facturai_incluir"][i]]
+    excluidas = len(lista) - len(incluidas)
+
+    def _num_ar_parse(s):
+        s = str(s or "0").replace(".", "").replace(",", ".")
+        try:
+            return float(s)
+        except ValueError:
+            return 0.0
+
+    total = sum(_num_ar_parse(f["Importe Total"]) for f in incluidas)
+    if excluidas:
+        st.caption(f"✅ {len(incluidas)} para exportar   ·   "
+                   f"❌ {excluidas} destildadas   ·   "
+                   f"Suma exportada: **${total:,.2f}**")
+    else:
+        st.caption(f"Suma total: **${total:,.2f}**")
 
     # ---------------------------------------------------------------- #
     # Mapeo de rubros con el mismo maestro que ya usa AFIP → JWIN.
@@ -2395,6 +2553,9 @@ def seccion_facturai():
         "Excel maestro (Proveedores + Rubros) — opcional",
         type=["xlsx"], key="facturai_maestro",
     )
+
+    # A partir de acá se usa 'incluidas' (solo las tildadas), no 'lista'.
+    lista = incluidas
 
     csv_puro = _facturai_a_csv(lista)
     csv_final = csv_puro    # si no hay maestro, es lo que se descarga
@@ -2489,6 +2650,7 @@ def seccion_facturai():
         if c4.button("🗑️ Vaciar lista", use_container_width=True, key="facturai_clear"):
             st.session_state["facturai_lista"] = []
             st.session_state["facturai_datos"] = []
+            st.session_state["facturai_incluir"] = []
             st.rerun()
 
     with st.expander("Ver JSON de la última factura cargada"):
