@@ -2138,38 +2138,32 @@ def _fmt_codigo_tipo(codigo) -> str:
         return str(codigo)
 
 
+def _factura_a_sin_desglose(datos: dict) -> bool:
+    """
+    True si es una Factura A que quedó sin discriminar Neto Gravado / IVA.
+    Estas filas hay que revisar a mano — no las auto-calculamos porque la
+    factura puede tener múltiples alícuotas (21% + 10,5%, etc.) y una
+    corrección basada en una sola sería incorrecta.
+    """
+    codigo_tipo = datos.get("tipo_comprobante_codigo")
+    if codigo_tipo not in (1, 2, 3, 4, 5):  # solo Factura/ND/NC/Recibo A
+        return False
+    try:
+        total = float(datos.get("importe_total") or 0)
+        neto = float(datos.get("importe_neto_gravado") or 0)
+        iva = float(datos.get("importe_iva") or 0)
+    except (TypeError, ValueError):
+        return False
+    return total > 0 and neto == 0 and iva == 0
+
+
 def _facturai_fila(datos: dict) -> dict:
     """
     Convierte los datos de un comprobante (QR o Gemini Vision) a una fila con
     el layout EXACTO del CSV que emite el Portal IVA de ARCA. Formato:
     fechas dd/mm/aaaa, decimales con coma, tipo de comprobante como código
     numérico. Así el archivo se puede subir directo a AFIP → JWIN sin tocar.
-
-    Fallback para Facturas A que quedaron sin desglose: si Gemini devolvió
-    neto=0 e IVA=0 en una Factura A con total > 0, se asume alícuota 21%
-    y se calcula Neto = Total / 1,21 e IVA = Total - Neto.
     """
-    codigo_tipo = datos.get("tipo_comprobante_codigo")
-    if codigo_tipo in (1, 2, 3, 4, 5):  # Factura/ND/NC/Recibo A
-        try:
-            total = float(datos.get("importe_total") or 0)
-            neto = float(datos.get("importe_neto_gravado") or 0)
-            iva = float(datos.get("importe_iva") or 0)
-        except (TypeError, ValueError):
-            total = neto = iva = 0.0
-        if total > 0 and neto == 0 and iva == 0:
-            alic = datos.get("alicuota_iva") or 21
-            try:
-                alic_f = float(alic)
-            except (TypeError, ValueError):
-                alic_f = 21.0
-            neto_calc = round(total / (1 + alic_f / 100), 2)
-            iva_calc = round(total - neto_calc, 2)
-            datos = {**datos,
-                     "importe_neto_gravado": neto_calc,
-                     "importe_iva": iva_calc,
-                     "alicuota_iva": alic_f}
-
     fila = {c: "" for c in _FACTURAI_COLUMNAS}
 
     fila["Fecha de Emisión"] = _fmt_fecha_ar(datos.get("fecha") or "")
@@ -2807,8 +2801,10 @@ def seccion_facturai():
         ]
 
     # Tabla editable con checkbox "Incluir"
+    datos_full = st.session_state["facturai_datos"]
     vista_df = pd.DataFrame([{
         "Incluir": st.session_state["facturai_incluir"][i],
+        "⚠️": "⚠️" if _factura_a_sin_desglose(datos_full[i]) else "",
         "Fecha": f["Fecha de Emisión"],
         "Tipo": f["Tipo de Comprobante"],
         "Emisor": f["Denominación Vendedor"] or QR.formato_cuit(f["Nro. Doc. Vendedor"]),
@@ -2818,6 +2814,17 @@ def seccion_facturai():
         "Importe": f["Importe Total"],
         "Origen": f["Origen"],
     } for i, f in enumerate(lista)])
+
+    n_advertencias = sum(1 for i, _ in enumerate(lista)
+                         if _factura_a_sin_desglose(datos_full[i]))
+    if n_advertencias:
+        st.warning(
+            f"⚠️ Hay **{n_advertencias}** Factura(s) A donde Gemini no pudo "
+            "discriminar Neto Gravado ni IVA (solo tiene el Total). Revisá "
+            "esas filas a mano en el Excel descargado antes de importar a "
+            "JWIN — la app NO las auto-calcula para no inventar valores "
+            "si la factura tiene múltiples alícuotas."
+        )
 
     editado = st.data_editor(
         vista_df, use_container_width=True, hide_index=True,
