@@ -157,7 +157,7 @@ def formato_cuit(cuit: str) -> str:
 # Detección del QR en imagen y PDF
 # --------------------------------------------------------------------------- #
 
-def _detectar_qr_en_imagen_bytes(image_bytes: bytes) -> str | None:
+def detectar_qr_en_imagen(image_bytes: bytes) -> str | None:
     """
     Detecta un QR en una imagen. Prueba varias estrategias en cascada porque
     el detector de OpenCV suele fallar con fotos de celular:
@@ -236,7 +236,7 @@ def _detectar_qr_en_imagen_bytes(image_bytes: bytes) -> str | None:
     return None
 
 
-def _pdf_a_imagenes(pdf_bytes: bytes, dpi: int = 200) -> list[bytes]:
+def pdf_a_imagenes(pdf_bytes: bytes, dpi: int = 200) -> list[bytes]:
     """Convierte cada página del PDF a PNG. Devuelve lista de bytes."""
     import fitz  # PyMuPDF
 
@@ -267,7 +267,7 @@ def procesar_archivo(data: bytes) -> dict:
 
     if es_pdf:
         try:
-            imagenes = _pdf_a_imagenes(data)
+            imagenes = pdf_a_imagenes(data)
         except Exception as exc:  # noqa: BLE001
             return {
                 "ok": False,
@@ -285,7 +285,7 @@ def procesar_archivo(data: bytes) -> dict:
 
     for i, img_bytes in enumerate(imagenes, start=1):
         try:
-            url = _detectar_qr_en_imagen_bytes(img_bytes)
+            url = detectar_qr_en_imagen(img_bytes)
         except Exception as exc:  # noqa: BLE001
             return {
                 "ok": False,

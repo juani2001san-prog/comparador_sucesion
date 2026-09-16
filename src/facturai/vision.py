@@ -29,37 +29,49 @@ except ImportError:  # pragma: no cover
 
 MODELO_DEFAULT = "gemini-3.6-flash"
 
-_PROMPT = """Analizá esta imagen de una factura o ticket fiscal argentino y devolveme
-SOLO un JSON válido con la siguiente estructura, sin texto adicional, sin markdown,
-sin backticks:
+_PROMPT = """Analizá esta imagen: puede contener UNA o VARIAS facturas/tickets fiscales
+argentinos (típico caso: varios tickets escaneados juntos en una misma hoja).
+
+Devolveme SOLO un JSON válido, sin markdown ni backticks, con esta estructura:
 
 {
-  "tipo_comprobante": "Factura A" | "Factura B" | "Factura C" | "Tique Factura A" | "Tique Factura B" | "Tique Factura C" | "Ticket" | "Nota de Crédito A" | "Nota de Crédito B" | "Nota de Crédito C" | "Nota de Débito A" | "Nota de Débito B" | "Nota de Débito C" | "Factura M" | "Recibo" | "Otro",
-  "codigo_tipo": 1 (código AFIP: 1=Fact A, 6=Fact B, 11=Fact C, 3/8/13=NC, 2/7/12=ND, 81/82/83=Tique, 111=Tique C, etc.),
-  "cuit_emisor": "20111746525" (solo los 11 dígitos, sin guiones),
-  "razon_social_emisor": "Denominación del emisor tal cual aparece",
-  "condicion_iva_emisor": "Responsable Inscripto" | "Monotributista" | "Exento" | "Consumidor Final" | null,
-  "punto_venta": 5 (número entero),
-  "numero": 486 (número entero del comprobante),
-  "fecha": "2026-08-24" (formato YYYY-MM-DD),
-  "cuit_receptor": "20437400432" o null si es consumidor final,
-  "razon_social_receptor": "Nombre del receptor" o null,
-  "importe_neto_gravado": 22314.05 (subtotal sin IVA, si discrimina),
-  "importe_iva": 4685.95 (IVA total sumado de todas las alícuotas),
-  "alicuota_iva": 21 (porcentaje predominante: 21, 10.5, 27, 5, 2.5, 0),
-  "importe_no_gravado": 0,
-  "importe_exento": 0,
-  "importe_percepciones": 0 (suma de todas las percepciones si aparecen),
-  "importe_total": 27000.00 (importe final total),
-  "cae": "86349754031008" o null si no aparece,
-  "moneda": "PES"
+  "facturas": [
+    {
+      "tipo_comprobante": "Factura A" | "Factura B" | "Factura C" | "Tique Factura A" | "Tique Factura B" | "Tique Factura C" | "Ticket" | "Nota de Crédito A" | "Nota de Crédito B" | "Nota de Crédito C" | "Nota de Débito A" | "Nota de Débito B" | "Nota de Débito C" | "Factura M" | "Recibo" | "Otro",
+      "codigo_tipo": 1,
+      "cuit_emisor": "20111746525",
+      "razon_social_emisor": "Denominación del emisor tal cual aparece",
+      "condicion_iva_emisor": "Responsable Inscripto" | "Monotributista" | "Exento" | "Consumidor Final" | null,
+      "punto_venta": 5,
+      "numero": 486,
+      "fecha": "2026-08-24",
+      "cuit_receptor": "20437400432",
+      "razon_social_receptor": "Nombre del receptor",
+      "importe_neto_gravado": 22314.05,
+      "importe_iva": 4685.95,
+      "alicuota_iva": 21,
+      "importe_no_gravado": 0,
+      "importe_exento": 0,
+      "importe_percepciones": 0,
+      "importe_total": 27000.00,
+      "cae": "86349754031008",
+      "moneda": "PES"
+    }
+  ]
 }
 
+Códigos AFIP (codigo_tipo): 1=Fact A, 6=Fact B, 11=Fact C, 3/8/13=NC A/B/C,
+2/7/12=ND A/B/C, 81=Tique Fact A, 82=Tique Fact B, 111=Tique Fact C,
+51/52/53=Fact/ND/NC M, 4/9/15=Recibo A/B/C.
+
 Reglas:
+- Devolvé SIEMPRE la clave 'facturas' con un array (aunque haya solo un comprobante).
+- Si la imagen tiene VARIAS facturas visibles (por ejemplo tickets pegados uno
+  al lado del otro en un scan), listalas todas — una por elemento del array.
 - Los importes son números decimales con PUNTO decimal (no coma). Sin símbolo $.
-- Si algún campo no aparece o no es legible, devolvé null.
-- Si es un ticket B o C que no discrimina IVA, el importe_iva puede ser 0 y el neto igual al total.
-- El CUIT del emisor es SIEMPRE quien emite (arriba de la factura), no el receptor.
+- Si un campo no aparece o no es legible, devolvé null.
+- Si un ticket B o C no discrimina IVA, importe_iva puede ser 0 y neto = total.
+- El CUIT emisor es SIEMPRE quien emite (arriba del ticket), no el receptor.
 - Devolvé exclusivamente el JSON, nada más.
 """
 
@@ -83,9 +95,12 @@ def _configurar_cliente():
     return genai
 
 
-def extraer_datos(image_bytes: bytes, modelo: str = MODELO_DEFAULT) -> dict:
+def extraer_datos(image_bytes: bytes, modelo: str = MODELO_DEFAULT) -> list[dict]:
     """
-    Envía la imagen a Gemini y devuelve los datos del comprobante como dict.
+    Envía la imagen a Gemini y devuelve la lista de comprobantes encontrados.
+
+    Siempre devuelve una lista (aunque sea de un solo elemento), porque la
+    imagen puede tener varias facturas escaneadas juntas.
 
     Lanza ``RuntimeError`` si la API responde con error o el JSON es inválido.
     """
@@ -102,7 +117,22 @@ def extraer_datos(image_bytes: bytes, modelo: str = MODELO_DEFAULT) -> dict:
 
     resp = modelo_ia.generate_content([_PROMPT, img])
     texto = (resp.text or "").strip()
-    return _parsear_json_respuesta(texto)
+    data = _parsear_json_respuesta(texto)
+
+    # Aceptamos varios shapes por si Gemini responde ligeramente distinto:
+    #   {"facturas": [...]}  → normal
+    #   [...]                → array pelado
+    #   {..campos..}         → un solo dict (formato viejo)
+    if isinstance(data, dict) and "facturas" in data:
+        facturas = data["facturas"]
+    elif isinstance(data, list):
+        facturas = data
+    elif isinstance(data, dict):
+        facturas = [data]
+    else:
+        facturas = []
+
+    return [f for f in facturas if isinstance(f, dict)]
 
 
 def _parsear_json_respuesta(texto: str) -> dict:

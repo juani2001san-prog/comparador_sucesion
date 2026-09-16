@@ -2187,60 +2187,89 @@ def seccion_facturai():
         gemini_ok = VISION.hay_conexion()
 
         errores = []
+
+        def _clave(datos):
+            cae = str(datos.get("codigo_autorizacion") or "")
+            return cae or f"{datos.get('cuit_emisor')}-{datos.get('punto_venta')}-{datos.get('numero')}"
+
         with st.spinner(f"Procesando {len(archivos)} archivo(s)…"):
             for arch in archivos:
-                datos = None
-                fuente = None
-                nombre = arch.name
+                nombre_arch = arch.name
+                data = arch.getvalue()
 
-                # 1) Intentar leer el QR primero (es 100% oficial y no consume API).
-                res_qr = QR.procesar_archivo(arch.getvalue())
-                if res_qr.get("ok"):
-                    datos = res_qr["datos"]
-                    fuente = "QR"
-
-                # 2) Si no hay QR y Gemini está configurado, mandar a Vision.
-                if datos is None and gemini_ok:
+                # Expandir PDF a lista de imágenes; imagen suelta queda como una.
+                if data[:4] == b"%PDF":
                     try:
-                        # Si vino PDF, usamos la primera página como imagen
-                        img_bytes = res_qr.get("imagen_preview") or arch.getvalue()
-                        raw = VISION.extraer_datos(img_bytes)
-                        datos = VISION.a_formato_qr(raw)
-                        fuente = "Vision"
+                        imagenes = QR.pdf_a_imagenes(data)
                     except Exception as exc:  # noqa: BLE001
-                        errores.append((nombre, f"Gemini falló: {exc}"))
+                        errores.append((nombre_arch, f"PDF ilegible: {exc}"))
                         continue
+                    if not imagenes:
+                        errores.append((nombre_arch, "El PDF no tiene páginas."))
+                        continue
+                else:
+                    imagenes = [data]
 
-                if datos is None:
-                    motivo = res_qr.get("error", "Sin QR y Vision no configurado.")
-                    errores.append((nombre, motivo))
-                    continue
+                for i, img_bytes in enumerate(imagenes, start=1):
+                    nombre_pag = (nombre_arch if len(imagenes) == 1
+                                  else f"{nombre_arch} · pág {i}")
 
-                # 3) Duplicados: por CAE si lo hay, sino por CUIT + punto vta + número.
-                cae = str(datos.get("codigo_autorizacion") or "")
-                clave = cae or f"{datos.get('cuit_emisor')}-{datos.get('punto_venta')}-{datos.get('numero')}"
-                claves = {
-                    (str(d.get("codigo_autorizacion") or "")
-                     or f"{d.get('cuit_emisor')}-{d.get('punto_venta')}-{d.get('numero')}")
-                    for d in st.session_state["facturai_datos"]
-                }
-                if clave in claves:
-                    errores.append((nombre, f"Duplicada — ya estaba cargada ({fuente})"))
-                    continue
+                    facturas_encontradas: list[dict] = []
 
-                st.session_state["facturai_datos"].append(datos)
-                st.session_state["facturai_lista"].append(_facturai_fila(datos))
+                    # 1) Intentar QR primero — es oficial, no consume API.
+                    try:
+                        url = QR.detectar_qr_en_imagen(img_bytes)
+                    except Exception:  # noqa: BLE001
+                        url = None
+                    if url:
+                        d = QR.parsear_url_afip(url)
+                        if d:
+                            facturas_encontradas.append(d)
+
+                    # 2) Si no encontró nada por QR, cae a Gemini Vision
+                    #    (una imagen puede tener varios comprobantes: Vision los
+                    #    devuelve todos como lista).
+                    if not facturas_encontradas:
+                        if not gemini_ok:
+                            errores.append((nombre_pag,
+                                           "Sin QR y Gemini no configurado."))
+                            continue
+                        try:
+                            raws = VISION.extraer_datos(img_bytes)
+                            for raw in raws:
+                                facturas_encontradas.append(VISION.a_formato_qr(raw))
+                        except Exception as exc:  # noqa: BLE001
+                            errores.append((nombre_pag, f"Gemini: {exc}"))
+                            continue
+                        if not facturas_encontradas:
+                            errores.append((nombre_pag,
+                                           "No se detectó ninguna factura."))
+                            continue
+
+                    # 3) Agregar cada factura encontrada, chequeando duplicados.
+                    for datos in facturas_encontradas:
+                        clave = _clave(datos)
+                        claves_existentes = {_clave(d)
+                                             for d in st.session_state["facturai_datos"]}
+                        if clave in claves_existentes:
+                            fuente = "Vision" if datos.get("fuente") == "gemini" else "QR"
+                            errores.append((nombre_pag,
+                                           f"Duplicada — ya estaba cargada ({fuente})"))
+                            continue
+                        st.session_state["facturai_datos"].append(datos)
+                        st.session_state["facturai_lista"].append(_facturai_fila(datos))
 
         if errores:
-            with st.expander(f"⚠️ {len(errores)} archivo(s) no se procesaron", expanded=True):
+            with st.expander(f"⚠️ {len(errores)} caso(s) no se procesaron",
+                             expanded=True):
                 for nombre, motivo in errores:
                     st.write(f"• **{nombre}**: {motivo}")
 
         if not gemini_ok:
             st.caption("💡 Tip: si configurás una API key gratuita de Gemini en "
                        "`st.secrets['gemini']['api_key']`, las facturas sin QR "
-                       "(tickets fiscales viejos, papel muy borroso) se leen "
-                       "automáticamente con IA de visión.")
+                       "(tickets viejos, escaneos con varios tickets juntos) se "
+                       "leen automáticamente con IA de visión.")
 
     # Tabla acumulada
     lista = st.session_state["facturai_lista"]
