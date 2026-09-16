@@ -27,10 +27,11 @@ except ImportError:  # pragma: no cover
     st = None  # type: ignore
 
 
-# gemini-3.6-flash es el mas nuevo pero tiene solo 20 requests/dia en el
-# tier gratuito. gemini-2.5-flash-lite tiene cuota mucho mas generosa
-# (varios miles/dia) y anda parecido para OCR de facturas.
-MODELO_DEFAULT = "gemini-2.5-flash-lite"
+# Google va cambiando el modelo default cada tanto. Actualmente
+# gemini-3.5-flash-lite es el que tiene tier gratuito generoso y
+# anda bien para OCR de facturas. Si Google lo deprecia (ya paso con
+# 2.5-flash y 2.5-flash-lite), va a haber que actualizarlo aca.
+MODELO_DEFAULT = "gemini-3.5-flash-lite"
 
 _PROMPT = """Analizá esta imagen: puede contener UNA o VARIAS facturas/tickets fiscales
 argentinos (típico caso: varios tickets escaneados juntos en una misma hoja).
