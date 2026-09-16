@@ -448,11 +448,17 @@ def _norm_cuit(valor):
 # Lectura del maestro (Proveedores + Rubros)
 # --------------------------------------------------------------------------
 def _leer_maestro(data):
-    """Devuelve (proveedores: CUIT->rubro, rubros: cod->descripcion)."""
+    """
+    Devuelve tres diccionarios:
+      - proveedores: CUIT -> rubro (código o texto)
+      - razones:    CUIT -> razón social (para completar filas sin denominación)
+      - rubros:     código -> descripción del rubro
+    """
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
 
     proveedores = {}
+    razones = {}
     hoja_prov = next((h for h in wb.sheetnames if "proveedor" in h.lower()), None)
     if hoja_prov:
         ws = wb[hoja_prov]
@@ -465,15 +471,21 @@ def _leer_maestro(data):
             return None
 
         c_cuit = idx("cuit") or 1
+        c_razon = idx("razon") or idx("razón") or idx("denominacion") or idx("denominación") or 2
         c_rubro = idx("rubro") or 3
         for r in range(2, ws.max_row + 1):
             cuit = _norm_cuit(ws.cell(r, c_cuit).value)
+            if not cuit:
+                continue
             rub = ws.cell(r, c_rubro).value
-            if cuit and rub not in (None, ""):
+            if rub not in (None, ""):
                 try:
                     proveedores[cuit] = int(rub)
                 except (TypeError, ValueError):
                     proveedores[cuit] = rub
+            razon = ws.cell(r, c_razon).value
+            if razon not in (None, ""):
+                razones[cuit] = str(razon).strip()
 
     rubros = {}
     hoja_rub = next((h for h in wb.sheetnames if "rubro" in h.lower()), None)
@@ -486,7 +498,7 @@ def _leer_maestro(data):
                     rubros[int(cod)] = desc
                 except (TypeError, ValueError):
                     pass
-    return proveedores, rubros
+    return proveedores, razones, rubros
 
 
 # --------------------------------------------------------------------------
@@ -531,7 +543,7 @@ def procesar(csv_bytes, maestro_bytes, extra=None):
         raise ValueError("No encontré la columna del CUIT del proveedor "
                          "('Nro. Doc. Emisor' o 'Nro. Doc. Vendedor') en el archivo de AFIP.")
 
-    proveedores, rubros = _leer_maestro(maestro_bytes)
+    proveedores, razones, rubros = _leer_maestro(maestro_bytes)
     # Sumar las asignaciones cargadas a mano (tienen prioridad).
     for cuit, rub in (extra or {}).items():
         c = _norm_cuit(cuit)
@@ -544,8 +556,19 @@ def procesar(csv_bytes, maestro_bytes, extra=None):
     salida = []
     desconocidos = {}
     asignados = 0
+    autocompletados = 0
     for fila in datos:
         cuit = _norm_cuit(fila[i_cuit]) if i_cuit < len(fila) else ""
+
+        # Si la Denominación está vacía y el CUIT figura en el maestro con
+        # razón social, la completamos automáticamente. Típico caso: filas
+        # que vinieron por QR de AFIP (el QR no trae razón social).
+        if i_deno is not None and i_deno < len(fila) and cuit:
+            deno_actual = str(fila[i_deno] or "").strip()
+            if not deno_actual and cuit in razones:
+                fila[i_deno] = razones[cuit]
+                autocompletados += 1
+
         rub = proveedores.get(cuit, "")
         if rub == "":
             deno = fila[i_deno] if (i_deno is not None and i_deno < len(fila)) else ""
@@ -561,6 +584,7 @@ def procesar(csv_bytes, maestro_bytes, extra=None):
         "asignados": asignados,
         "sin_rubro": len(datos) - asignados,
         "proveedores_nuevos": len(desconocidos),
+        "denominaciones_autocompletadas": autocompletados,
     }
     return encab_out, salida, desconocidos, stats, rubros
 
