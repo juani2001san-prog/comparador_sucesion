@@ -27,11 +27,18 @@ except ImportError:  # pragma: no cover
     st = None  # type: ignore
 
 
-# Google va cambiando el modelo default cada tanto. Actualmente
-# gemini-3.5-flash-lite es el que tiene tier gratuito generoso y
-# anda bien para OCR de facturas. Si Google lo deprecia (ya paso con
-# 2.5-flash y 2.5-flash-lite), va a haber que actualizarlo aca.
-MODELO_DEFAULT = "gemini-3.5-flash-lite"
+# Google renombra modelos seguido y va deprecando los anteriores.
+# Probamos en cascada — el primero que responde OK se usa. Podés
+# también forzar uno específico configurándolo en st.secrets['gemini']['modelo'].
+MODELOS_FALLBACK = [
+    "gemini-flash-latest",       # alias que sigue al modelo Flash actual
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+]
+MODELO_DEFAULT = MODELOS_FALLBACK[0]
 
 _PROMPT = """Analizá esta imagen: puede contener UNA o VARIAS facturas/tickets fiscales
 argentinos (típico caso: varios tickets escaneados juntos en una misma hoja).
@@ -120,29 +127,78 @@ def _configurar_cliente():
     return genai
 
 
-def extraer_datos(image_bytes: bytes, modelo: str = MODELO_DEFAULT) -> list[dict]:
+def _modelos_a_probar():
+    """Modelo forzado en secrets (si existe) + cascada de fallback."""
+    modelo_forzado = None
+    if st is not None:
+        try:
+            m = st.secrets["gemini"].get("modelo")
+            if m:
+                modelo_forzado = str(m).strip()
+        except Exception:
+            pass
+    if modelo_forzado:
+        return [modelo_forzado] + [m for m in MODELOS_FALLBACK if m != modelo_forzado]
+    return list(MODELOS_FALLBACK)
+
+
+# Cache en memoria: cuando un modelo respondió OK, se usa ese en las
+# siguientes llamadas — evita perder tiempo probando modelos deprecados.
+_ultimo_modelo_ok: str | None = None
+
+
+def extraer_datos(image_bytes: bytes, modelo: str | None = None) -> list[dict]:
     """
     Envía la imagen a Gemini y devuelve la lista de comprobantes encontrados.
 
     Siempre devuelve una lista (aunque sea de un solo elemento), porque la
     imagen puede tener varias facturas escaneadas juntas.
 
-    Lanza ``RuntimeError`` si la API responde con error o el JSON es inválido.
+    Prueba varios modelos en cascada — si el primero está deprecado (Google
+    los va renombrando), pasa al siguiente. El que funciona queda cacheado.
     """
+    global _ultimo_modelo_ok
+
     from PIL import Image
 
     genai = _configurar_cliente()
-    modelo_ia = genai.GenerativeModel(modelo)
 
     img = Image.open(io.BytesIO(image_bytes))
-    # Reducir tamaño si es enorme (Gemini acepta hasta 20MB pero se cobra más).
     max_lado = 2000
     if max(img.size) > max_lado:
         img.thumbnail((max_lado, max_lado))
 
-    resp = modelo_ia.generate_content([_PROMPT, img])
-    texto = (resp.text or "").strip()
-    data = _parsear_json_respuesta(texto)
+    if modelo is not None:
+        candidatos = [modelo]
+    else:
+        candidatos = _modelos_a_probar()
+        if _ultimo_modelo_ok and _ultimo_modelo_ok in candidatos:
+            # Mover al frente el último que funcionó
+            candidatos.remove(_ultimo_modelo_ok)
+            candidatos.insert(0, _ultimo_modelo_ok)
+
+    ultimo_error = None
+    for nombre in candidatos:
+        try:
+            modelo_ia = genai.GenerativeModel(nombre)
+            resp = modelo_ia.generate_content([_PROMPT, img])
+            texto = (resp.text or "").strip()
+            data = _parsear_json_respuesta(texto)
+            _ultimo_modelo_ok = nombre
+            break
+        except Exception as exc:  # noqa: BLE001
+            msg = str(exc)
+            # Solo saltar al siguiente si es un error de modelo (404) o
+            # deprecación. Otros errores (rate limit, JSON malo) se propagan.
+            if "404" in msg or "not found" in msg.lower() or \
+               "no longer available" in msg.lower():
+                ultimo_error = exc
+                continue
+            raise
+    else:
+        raise RuntimeError(
+            f"Ningún modelo de Gemini respondió OK. Último error: {ultimo_error}"
+        )
 
     # Aceptamos varios shapes por si Gemini responde ligeramente distinto:
     #   {"facturas": [...]}  → normal
