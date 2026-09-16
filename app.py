@@ -2165,6 +2165,113 @@ def _facturai_fila(datos: dict) -> dict:
     return fila
 
 
+def _cargar_facturai_csv(csv_bytes: bytes):
+    """
+    Lee un CSV con el layout Portal IVA (o similar) y lo carga en el estado
+    de la sesión como si viniera de procesar fotos. Sirve para retomar un
+    CSV ya generado por Facturai (o incluso el CSV mensual de ARCA) y seguir
+    con el cruce de duplicados y el mapeo de rubros sin re-procesar imágenes.
+    """
+    import csv as _csv
+    import io as _io
+
+    # Decodificar
+    try:
+        texto = csv_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        texto = csv_bytes.decode("latin-1")
+
+    filas = list(_csv.reader(_io.StringIO(texto), delimiter=";"))
+    if not filas:
+        return 0
+
+    header = [str(h).strip().lower() for h in filas[0]]
+
+    def _idx(*claves):
+        for k in claves:
+            k = k.lower()
+            for i, h in enumerate(header):
+                if k in h:
+                    return i
+        return None
+
+    i_fecha = _idx("fecha de emisi", "fecha")
+    i_tipo = _idx("tipo de comprobante", "tipo")
+    i_pv = _idx("punto de venta")
+    i_num = _idx("número de comprobante", "numero de comprobante", "número desde",
+                 "numero desde")
+    i_cuit = _idx("nro. doc. vendedor", "nro doc vendedor", "nro. doc")
+    i_deno = _idx("denominación vendedor", "denominacion vendedor")
+    i_total = _idx("importe total")
+    i_moneda = _idx("moneda original", "moneda")
+    i_ctz = _idx("tipo de cambio", "cotización", "cotizacion")
+    i_cae = _idx("cae", "cod. autorizaci")
+    i_origen = _idx("origen")
+
+    if i_cuit is None or i_total is None:
+        raise ValueError("El CSV no parece del layout Portal IVA "
+                         "(faltan columnas Nro. Doc. Vendedor o Importe Total).")
+
+    def _num(s):
+        s = str(s or "").strip()
+        if not s:
+            return 0.0
+        if "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        try:
+            return float(s)
+        except ValueError:
+            return 0.0
+
+    def _cuit(s):
+        return "".join(c for c in str(s or "") if c.isdigit())
+
+    def _fecha_iso(dmy):
+        s = str(dmy or "").strip()
+        try:
+            d, m, y = s[:10].split("/")
+            return f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
+        except (ValueError, IndexError):
+            return s
+
+    cargadas = 0
+    for fila in filas[1:]:
+        if not fila or len(fila) <= i_cuit:
+            continue
+        cuit = _cuit(fila[i_cuit])
+        if len(cuit) != 11:
+            continue
+
+        datos = {
+            "fecha": _fecha_iso(fila[i_fecha]) if i_fecha is not None else "",
+            "tipo_comprobante_codigo": int(_num(fila[i_tipo])) if i_tipo is not None else None,
+            "tipo_comprobante": "",  # no viene en el CSV, se puede reconstruir después
+            "punto_venta": int(_num(fila[i_pv])) if i_pv is not None else None,
+            "numero": int(_num(fila[i_num])) if i_num is not None else None,
+            "cuit_emisor": cuit,
+            "razon_social_emisor": (fila[i_deno].strip() if i_deno is not None
+                                    and i_deno < len(fila) else ""),
+            "importe_total": _num(fila[i_total]),
+            "moneda": (fila[i_moneda] if i_moneda is not None
+                       and i_moneda < len(fila) else "PES") or "PES",
+            "cotizacion": _num(fila[i_ctz]) if i_ctz is not None else 1,
+            "codigo_autorizacion": (fila[i_cae].strip() if i_cae is not None
+                                    and i_cae < len(fila) else ""),
+            "fuente": None,     # no sabemos si vino de QR o Vision
+        }
+        # Si venía la columna Origen del Excel previo, la conservamos.
+        if i_origen is not None and i_origen < len(fila):
+            origen = str(fila[i_origen] or "").strip().lower()
+            if "vision" in origen or "gemini" in origen:
+                datos["fuente"] = "gemini"
+
+        st.session_state["facturai_datos"].append(datos)
+        st.session_state["facturai_lista"].append(_facturai_fila(datos))
+        st.session_state.setdefault("facturai_incluir", []).append(True)
+        cargadas += 1
+    return cargadas
+
+
 def _detectar_duplicados_arca(datos_lista: list[dict], csv_arca_bytes: bytes) -> set[int]:
     """
     Cruza las facturas procesadas por Facturai contra un CSV de ARCA
@@ -2335,6 +2442,33 @@ def seccion_facturai():
         st.session_state["facturai_lista"] = []      # cada item: dict con la fila
         st.session_state["facturai_datos"] = []      # cada item: dict con los datos crudos del QR
 
+    # Modo alternativo: retomar un CSV ya procesado antes.
+    # Útil si bajaste el CSV en una sesión anterior y ahora querés
+    # cruzarlo con ARCA o mapear rubros sin reprocesar las fotos.
+    lista_actual = st.session_state.get("facturai_lista", [])
+    with st.expander("📄 ¿Ya tenés un CSV procesado antes? Cargalo acá",
+                     expanded=not lista_actual):
+        prev_csv = st.file_uploader(
+            "CSV con el layout Portal IVA (32 columnas ARCA)",
+            type=["csv"], key="facturai_prev_csv",
+            help="Podés subir un CSV que hayas bajado antes de esta misma "
+                 "sección, o cualquier CSV con layout ARCA — la app lo carga "
+                 "en la sesión y podés seguir con cruce y rubros.",
+        )
+        if prev_csv is not None:
+            if st.button("📥 Cargar en la sesión", key="facturai_cargar_prev",
+                         type="primary", use_container_width=True):
+                try:
+                    n = _cargar_facturai_csv(prev_csv.getvalue())
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"No se pudo cargar el CSV: {exc}")
+                else:
+                    st.success(f"Se cargaron {n} factura(s). "
+                               "Ya podés hacer el cruce con ARCA y bajar el CSV.")
+                    st.rerun()
+
+    st.divider()
+    st.subheader("O procesar fotos/PDFs nuevos")
     archivos = st.file_uploader(
         "Foto(s) o PDF(s) de facturas",
         type=["jpg", "jpeg", "png", "webp", "bmp", "tif", "tiff", "pdf"],
