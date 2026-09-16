@@ -2380,33 +2380,113 @@ def seccion_facturai():
     total = sum(float(f["Importe Total"] or 0) for f in lista)
     st.caption(f"Suma total de importes cargados: **${total:,.2f}**")
 
-    c1, c2, c3 = st.columns(3)
+    # ---------------------------------------------------------------- #
+    # Mapeo de rubros con el mismo maestro que ya usa AFIP → JWIN.
+    # Es opcional: si no subís maestro, el CSV sale sin la columna Rubro.
+    # ---------------------------------------------------------------- #
+    st.divider()
+    st.subheader("🏷️ Asignar rubros para JWIN")
+    st.caption("Si subís tu **Excel maestro de proveedores** (el mismo que usás en "
+               "la sección AFIP → JWIN), la app le pone el rubro a cada factura "
+               "y te deja el CSV **listo para importar a JWIN**. Si no lo subís, "
+               "podés bajar el CSV crudo sin rubros abajo.")
+
+    up_maestro = st.file_uploader(
+        "Excel maestro (Proveedores + Rubros) — opcional",
+        type=["xlsx"], key="facturai_maestro",
+    )
+
+    csv_puro = _facturai_a_csv(lista)
+    csv_final = csv_puro    # si no hay maestro, es lo que se descarga
+    stats_map = None
+    nuevos = []             # (cuit, denom, rubro, desc) para actualizar el maestro
+
+    if up_maestro is not None:
+        maestro_bytes = up_maestro.getvalue()
+        try:
+            encab_final, filas_final, desconocidos, stats_map, rubros_disp = \
+                AJ.procesar(csv_puro, maestro_bytes)
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"No se pudo leer el maestro: {exc}")
+            desconocidos = {}
+        else:
+            # Interfaz para asignar rubro a proveedores nuevos
+            if desconocidos:
+                st.warning(
+                    f"Hay {len(desconocidos)} proveedor(es) sin rubro en tu maestro. "
+                    "Asignáselos ahora — se aplica al toque y quedan cargados en el "
+                    "maestro actualizado que podés bajar abajo."
+                )
+                opciones = [""] + [f"{c} - {d}" for c, d in sorted(rubros_disp.items())]
+                base = pd.DataFrame([{"CUIT": c, "Denominación": d, "Rubro": ""}
+                                     for c, d in sorted(desconocidos.items())])
+                editado = st.data_editor(
+                    base, hide_index=True, use_container_width=True,
+                    key="facturai_editor",
+                    column_config={
+                        "CUIT": st.column_config.TextColumn(disabled=True),
+                        "Denominación": st.column_config.TextColumn(disabled=True),
+                        "Rubro": st.column_config.SelectboxColumn("Rubro", options=opciones),
+                    },
+                )
+                extra = {}
+                for _, row in editado.iterrows():
+                    sel = str(row["Rubro"]).strip()
+                    if sel:
+                        cod = int(sel.split(" - ")[0])
+                        cuit = AJ._norm_cuit(row["CUIT"])
+                        extra[cuit] = cod
+                        nuevos.append((cuit, row["Denominación"], cod,
+                                       rubros_disp.get(cod, "")))
+                if extra:
+                    # Reprocesar con los rubros recién cargados
+                    encab_final, filas_final, desconocidos, stats_map, rubros_disp = \
+                        AJ.procesar(csv_puro, maestro_bytes, extra)
+
+            csv_final = AJ.construir_csv(encab_final, filas_final)
+
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Comprobantes", stats_map["comprobantes"])
+            m2.metric("Con rubro", stats_map["asignados"])
+            m3.metric("Sin rubro", stats_map["sin_rubro"])
+            if stats_map["sin_rubro"] == 0:
+                st.success("Todos los comprobantes tienen su rubro. 🎉")
+
+    st.divider()
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
-        csv_bytes = _facturai_a_csv(lista)
         c1.download_button(
-            "⬇️ CSV para AFIP → JWIN",
-            data=csv_bytes,
+            "⬇️ CSV para JWIN" + (" (con rubro)" if up_maestro is not None else ""),
+            data=csv_final,
             file_name=f"Facturas_procesadas_{datetime.now():%Y%m%d_%H%M}.csv",
             mime="text/csv",
             use_container_width=True,
             key="facturai_dl_csv",
-            help="CSV con el mismo layout que el Portal IVA de ARCA. Se puede "
-                 "subir directo en la sección 'AFIP → JWIN con rubros'.",
+            type="primary",
         )
     with c2:
         excel = _facturai_a_excel(lista)
         c2.download_button(
-            "⬇️ Excel (para revisar)",
+            "⬇️ Excel (revisar)",
             data=excel,
             file_name=f"Facturas_procesadas_{datetime.now():%Y%m%d_%H%M}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
             key="facturai_dl_xlsx",
-            help="Excel con las 32 columnas de ARCA + CAE + Origen (QR/Vision). "
-                 "Útil para revisar antes de importar a JWIN.",
         )
     with c3:
-        if c3.button("🗑️ Vaciar lista", use_container_width=True, key="facturai_clear"):
+        # Botón para bajar el maestro actualizado con los proveedores nuevos.
+        if up_maestro is not None and nuevos:
+            c3.download_button(
+                "⬇️ Maestro actualizado",
+                data=AJ.construir_maestro_actualizado(up_maestro.getvalue(), nuevos),
+                file_name=up_maestro.name.replace(".xlsx", "_actualizado.xlsx"),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key="facturai_dl_maestro",
+            )
+    with c4:
+        if c4.button("🗑️ Vaciar lista", use_container_width=True, key="facturai_clear"):
             st.session_state["facturai_lista"] = []
             st.session_state["facturai_datos"] = []
             st.rerun()
