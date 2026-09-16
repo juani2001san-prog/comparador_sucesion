@@ -27,7 +27,10 @@ except ImportError:  # pragma: no cover
     st = None  # type: ignore
 
 
-MODELO_DEFAULT = "gemini-3.6-flash"
+# gemini-3.6-flash es el mas nuevo pero tiene solo 20 requests/dia en el
+# tier gratuito. gemini-2.5-flash-lite tiene cuota mucho mas generosa
+# (varios miles/dia) y anda parecido para OCR de facturas.
+MODELO_DEFAULT = "gemini-2.5-flash-lite"
 
 _PROMPT = """Analizá esta imagen: puede contener UNA o VARIAS facturas/tickets fiscales
 argentinos (típico caso: varios tickets escaneados juntos en una misma hoja).
