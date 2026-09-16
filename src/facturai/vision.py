@@ -31,12 +31,16 @@ except ImportError:  # pragma: no cover
 # Probamos en cascada — el primero que responde OK se usa. Podés
 # también forzar uno específico configurándolo en st.secrets['gemini']['modelo'].
 MODELOS_FALLBACK = [
-    "gemini-flash-latest",       # alias que sigue al modelo Flash actual
+    "gemini-flash-latest",         # alias oficial que sigue al modelo Flash actual
+    "gemini-2.0-flash",            # estable y con free tier propio
+    "gemini-2.0-flash-exp",        # cuota generosa historicamente
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash-latest",     # muy estable
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",         # variante lite con su propia cuota
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-1.5-flash",
+    "gemini-3.5-flash-lite",
 ]
 MODELO_DEFAULT = MODELOS_FALLBACK[0]
 
@@ -187,11 +191,22 @@ def extraer_datos(image_bytes: bytes, modelo: str | None = None) -> list[dict]:
             _ultimo_modelo_ok = nombre
             break
         except Exception as exc:  # noqa: BLE001
-            msg = str(exc)
-            # Solo saltar al siguiente si es un error de modelo (404) o
-            # deprecación. Otros errores (rate limit, JSON malo) se propagan.
-            if "404" in msg or "not found" in msg.lower() or \
-               "no longer available" in msg.lower():
+            msg = str(exc).lower()
+            # Saltar al siguiente si es error de modelo (404), deprecación,
+            # cuota agotada (429), o límite del free tier. En el free tier
+            # cada modelo tiene su propia cuota diaria — es razonable ir
+            # probando distintos si uno se agotó.
+            recuperable = (
+                "404" in msg
+                or "not found" in msg
+                or "no longer available" in msg
+                or "429" in msg
+                or "quota" in msg
+                or "resource_exhausted" in msg
+                or "rate limit" in msg
+                or "free_tier" in msg
+            )
+            if recuperable:
                 ultimo_error = exc
                 continue
             raise
