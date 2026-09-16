@@ -2640,6 +2640,16 @@ def seccion_facturai():
         key="facturai_up",
     )
 
+    prefer_vision = st.checkbox(
+        "Usar siempre Gemini Vision (trae Denominación + Neto/IVA discriminados)",
+        value=True, key="facturai_prefer_vision",
+        help="Recomendado: leer todas las facturas con Gemini Vision para "
+             "que salgan completas. El QR se usa como respaldo si Vision falla. "
+             "Si preferís ahorrar cuota y aceptar que las de QR salgan sin "
+             "desglose, destildá esto — usa QR primero, Vision solo cuando "
+             "no hay QR.",
+    )
+
     procesar = st.button("🔍 Procesar archivos", type="primary",
                          disabled=not archivos, use_container_width=True)
 
