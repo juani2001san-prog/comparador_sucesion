@@ -2158,7 +2158,15 @@ def _facturai_fila(datos: dict) -> dict:
     fila["Moneda Original"] = datos.get("moneda") or "PES"
     fila["Tipo de Cambio"] = _fmt_num_ar(datos.get("cotizacion") or 1)
 
-    fila["Importe No Gravado"] = _fmt_num_ar(datos.get("importe_no_gravado") or 0)
+    # JWIN no tiene columnas separadas para Impuestos Internos ni Otros
+    # Tributos, así que los ITC/IDC y otros tributos los sumamos DIRECTO
+    # al No Gravado desde acá — así el CSV que baja de Facturai ya está
+    # listo para importar sin pasar por otra normalización.
+    no_gravado_base = float(datos.get("importe_no_gravado") or 0)
+    imp_internos = float(datos.get("importe_impuestos_internos") or 0)
+    otros_trib = float(datos.get("importe_otros_tributos") or 0)
+    fila["Importe No Gravado"] = _fmt_num_ar(
+        no_gravado_base + imp_internos + otros_trib)
     fila["Importe Exento"] = _fmt_num_ar(datos.get("importe_exento") or 0)
     fila["Crédito Fiscal Computable"] = "0"
     fila["Importe de Per. o Pagos a Cta. de Otros Imp. Nac."] = "0"
@@ -2169,12 +2177,9 @@ def _facturai_fila(datos: dict) -> dict:
         or 0)
     fila["Importe de Impuestos Municipales"] = "0"
     fila["Importe de Percepciones o Pagos a Cuenta de IVA"] = "0"
-    # ITC + IDC + otros impuestos internos → R (Impuestos Internos).
-    # Después la normalización del CSV los pasa a K (No Gravado) automáticamente.
-    fila["Importe de Impuestos Internos"] = _fmt_num_ar(
-        datos.get("importe_impuestos_internos") or 0)
-    fila["Importe Otros Tributos"] = _fmt_num_ar(
-        datos.get("importe_otros_tributos") or 0)
+    # Estas dos SIEMPRE en cero — el importe ya fue trasladado a No Gravado.
+    fila["Importe de Impuestos Internos"] = "0"
+    fila["Importe Otros Tributos"] = "0"
 
     # Netos e IVA por alícuota. Como Gemini reporta la alícuota predominante,
     # pongo neto+IVA en la columna que corresponde a esa alícuota.
