@@ -2278,11 +2278,17 @@ def _facturai_a_csv(facturas: list[dict]) -> bytes:
     return buf.getvalue().encode("utf-8-sig")
 
 
-def _facturai_a_excel(facturas: list[dict]) -> bytes:
-    """Genera un Excel con las facturas acumuladas en el layout tipo Portal IVA."""
+def _facturai_a_excel(facturas: list[dict], columnas: list[str] | None = None) -> bytes:
+    """
+    Genera un Excel con las facturas en el layout Portal IVA (32 cols de ARCA).
+    Se puede pasar ``columnas`` para forzar otro layout (ej. cuando se aplica
+    el maestro y viene 32 + 'Rubro').
+    """
     import io as _io
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
+
+    cols = columnas if columnas is not None else list(_COLS_ARCA)
 
     wb = Workbook()
     ws = wb.active
@@ -2290,14 +2296,19 @@ def _facturai_a_excel(facturas: list[dict]) -> bytes:
 
     bold = Font(bold=True, color="FFFFFF")
     fill = PatternFill("solid", fgColor="1F4E78")
-    for j, col in enumerate(_FACTURAI_COLUMNAS, start=1):
+    for j, col in enumerate(cols, start=1):
         c = ws.cell(1, j, col)
         c.font = bold
         c.fill = fill
 
     for i, f in enumerate(facturas, start=2):
-        for j, col in enumerate(_FACTURAI_COLUMNAS, start=1):
-            ws.cell(i, j, f.get(col, ""))
+        # ``facturas`` puede venir como lista de dicts (Facturai-style) o de
+        # listas (AJ.procesar-style). Manejo los dos casos.
+        for j, col in enumerate(cols, start=1):
+            if isinstance(f, dict):
+                ws.cell(i, j, f.get(col, ""))
+            elif isinstance(f, (list, tuple)) and j - 1 < len(f):
+                ws.cell(i, j, f[j - 1])
 
     # Anchos razonables
     anchos = {"A": 12, "B": 22, "C": 8, "D": 12, "E": 14, "F": 14,
@@ -2626,10 +2637,18 @@ def seccion_facturai():
             type="primary",
         )
     with c2:
-        excel = _facturai_a_excel(lista)
+        # Excel espeja el CSV: si hay maestro, usa la salida de AJ.procesar
+        # (32 columnas ARCA + Rubro). Si no, solo las 32 de ARCA. Nunca
+        # CAE ni Origen, así JWIN encuentra el Rubro en la columna AG.
+        if up_maestro is not None and stats_map is not None:
+            excel_bytes = _facturai_a_excel(filas_final, columnas=encab_final)
+            label_excel = "⬇️ Excel (con rubro)"
+        else:
+            excel_bytes = _facturai_a_excel(lista)
+            label_excel = "⬇️ Excel (revisar)"
         c2.download_button(
-            "⬇️ Excel (revisar)",
-            data=excel,
+            label_excel,
+            data=excel_bytes,
             file_name=f"Facturas_procesadas_{datetime.now():%Y%m%d_%H%M}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
