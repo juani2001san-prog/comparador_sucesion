@@ -503,8 +503,16 @@ def procesar(csv_bytes, maestro_bytes, extra=None):
         raise ValueError("El archivo de AFIP está vacío.")
     encab, datos = list(filas[0]), [list(f) for f in filas[1:]]
 
-    # Si ya traía una columna 'Rubro' al final (ej. un Excel ya armado), la saco.
-    if encab and str(encab[-1]).strip().lower() == "rubro":
+    # Recortar del final todas las columnas que NO son parte del layout
+    # Portal IVA de ARCA: 'Rubro' (si ya venía asignado), 'CAE', 'Origen',
+    # o cualquier extra que un flujo previo haya sumado al final del CSV.
+    #
+    # Motivo: JWIN importa por posición y espera 'Rubro' en la columna AG
+    # (col 33), inmediatamente después de las 32 columnas estándar de ARCA.
+    # Si dejáramos las extras, el Rubro terminaría en la posición
+    # equivocada y JWIN no lo encontraría.
+    cols_arca_norm = {_norm_cabecera(c) for c in HEADER_PORTAL_IVA}
+    while encab and _norm_cabecera(encab[-1]) not in cols_arca_norm:
         encab = encab[:-1]
         datos = [f[:len(encab)] for f in datos]
 
