@@ -2704,38 +2704,62 @@ def seccion_facturai():
 
                 facturas_encontradas: list[dict] = []
 
-                # 1) Intentar QR primero — es oficial, no consume API.
-                try:
-                    url = QR.detectar_qr_en_imagen(img_bytes)
-                except Exception:  # noqa: BLE001
-                    url = None
-                if url:
-                    d = QR.parsear_url_afip(url)
-                    if d:
-                        facturas_encontradas.append(d)
-
-                # 2) Si no encontró nada por QR, cae a Gemini Vision
-                #    (una imagen puede tener varios comprobantes: Vision los
-                #    devuelve todos como lista).
-                if not facturas_encontradas:
-                    if not gemini_ok:
-                        errores.append((nombre_pag,
-                                       "Sin QR y Gemini no configurado."))
-                        procesadas += 1
-                        continue
+                if prefer_vision and gemini_ok:
+                    # Modo Vision-primero: manda todo a Gemini para tener
+                    # el desglose completo (Denominación, Neto, IVA).
+                    # Si Vision falla, cae a QR como respaldo.
                     try:
                         raws = VISION.extraer_datos(img_bytes)
                         for raw in raws:
                             facturas_encontradas.append(VISION.a_formato_qr(raw))
                     except Exception as exc:  # noqa: BLE001
-                        errores.append((nombre_pag, f"Gemini: {exc}"))
-                        procesadas += 1
-                        continue
+                        # Vision falló, probamos QR
+                        try:
+                            url = QR.detectar_qr_en_imagen(img_bytes)
+                        except Exception:  # noqa: BLE001
+                            url = None
+                        if url:
+                            d = QR.parsear_url_afip(url)
+                            if d:
+                                facturas_encontradas.append(d)
+                        if not facturas_encontradas:
+                            errores.append((nombre_pag, f"Gemini: {exc}"))
+                            procesadas += 1
+                            continue
                     if not facturas_encontradas:
                         errores.append((nombre_pag,
                                        "No se detectó ninguna factura."))
                         procesadas += 1
                         continue
+                else:
+                    # Modo QR-primero (más rápido, no consume cuota).
+                    try:
+                        url = QR.detectar_qr_en_imagen(img_bytes)
+                    except Exception:  # noqa: BLE001
+                        url = None
+                    if url:
+                        d = QR.parsear_url_afip(url)
+                        if d:
+                            facturas_encontradas.append(d)
+                    if not facturas_encontradas:
+                        if not gemini_ok:
+                            errores.append((nombre_pag,
+                                           "Sin QR y Gemini no configurado."))
+                            procesadas += 1
+                            continue
+                        try:
+                            raws = VISION.extraer_datos(img_bytes)
+                            for raw in raws:
+                                facturas_encontradas.append(VISION.a_formato_qr(raw))
+                        except Exception as exc:  # noqa: BLE001
+                            errores.append((nombre_pag, f"Gemini: {exc}"))
+                            procesadas += 1
+                            continue
+                        if not facturas_encontradas:
+                            errores.append((nombre_pag,
+                                           "No se detectó ninguna factura."))
+                            procesadas += 1
+                            continue
 
                 # 3) Agregar cada factura encontrada, chequeando duplicados.
                 for datos in facturas_encontradas:
