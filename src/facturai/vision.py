@@ -120,9 +120,17 @@ FACTURAS A (código 1, 2, 3) - MUY IMPORTANTE:
     importe_iva = 45000 - 37190.08 = 7809.92
 - Si no se ve la alícuota, asumí 21% (la más común).
 
-TICKETS B (81, 82) y C (11, 111) - MUY IMPORTANTE:
-- Los tickets a consumidor final NO discriminan IVA en el ticket.
-- Para estos, importe_iva puede ser 0 y importe_neto_gravado = importe_total.
+FACTURAS y TICKETS B/C (códigos 6, 11, 81, 82, 111) - MUY IMPORTANTE:
+- Estos comprobantes NO discriminan IVA (van a consumidor final, o los
+  emite un monotributista, banco, o entidad exenta).
+- REGLA: si NO ves discriminación de Neto Gravado + IVA en el ticket,
+  poné el TOTAL en importe_exento y dejá importe_neto_gravado = 0 y
+  importe_iva = 0. NUNCA dejes todo en 0 (el comprobante descuadra en JWIN).
+- Ejemplos típicos: honorarios de monotributistas (Factura C), comisiones
+  bancarias (Factura C), servicios varios de monotributistas (Factura B/C),
+  compras chicas en comercios (Tique B/C).
+- Solo si el ticket SÍ muestra Neto + IVA discriminados (raro pero pasa
+  en Tique B de responsable inscripto), cargá ambos.
 
 Devolvé exclusivamente el JSON, nada más.
 """
