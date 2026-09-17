@@ -1030,20 +1030,110 @@ def seccion_ventas():
 # Sección: AFIP (Portal IVA) → JWIN con rubros
 # --------------------------------------------------------------------------- #
 
+def _unificar_csvs_portal_iva(archivos_bytes: list[bytes]) -> tuple[bytes, dict]:
+    """
+    Une varios CSVs en layout Portal IVA (32 cols ARCA, con o sin Rubro/CAE/
+    Origen al final) en un único CSV deduplicado.
+
+    Deduplicación por (Tipo + Punto Venta + Número + CUIT emisor). Cuando
+    aparece una clave repetida entre archivos, gana la fila con MÁS datos
+    (más columnas no vacías) — así el CSV de Facturai con desglose Neto/IVA
+    le gana a la fila del mismo comprobante venido de ARCA sin desglose.
+    """
+    import csv as _csv
+    import io as _io
+
+    filas_por_clave: dict[str, list[str]] = {}
+    duplicados = 0
+    total_leidas = 0
+
+    for data in archivos_bytes:
+        # Si es el CSV crudo del Portal IVA, primero lo normalizo
+        # (mueve Impuestos Internos + Otros Tributos → No Gravado).
+        if AJ.es_csv_portal_iva(data):
+            norm = AJ.normalizar_portal_iva(data)
+            if norm["errores_header"] or norm["descuadres"]:
+                # Si el crudo trae descuadres, no lo mezclo — el flujo
+                # principal después lo va a mostrar para revisión.
+                continue
+            data = norm["csv_bytes"]
+
+        # Detección de excel vs csv (por si alguien sube .xlsx)
+        if data[:2] == b"PK":
+            import openpyxl  # noqa: PLC0415
+            wb = openpyxl.load_workbook(_io.BytesIO(data), data_only=True)
+            ws = wb.active
+            filas = [[("" if c.value is None else str(c.value)) for c in r]
+                     for r in ws.rows]
+        else:
+            try:
+                text = data.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                text = data.decode("latin-1")
+            rdr = _csv.reader(_io.StringIO(text), delimiter=";")
+            filas = list(rdr)
+
+        if len(filas) < 2:
+            continue
+
+        # Descartar Rubro / CAE / Origen del final: me quedo con las 32 ARCA.
+        for fila in filas[1:]:
+            fila_32 = (list(fila) + [""] * 32)[:32]
+            total_leidas += 1
+
+            tipo = str(fila_32[1]).strip()
+            pv = str(fila_32[2]).strip()
+            nro = str(fila_32[3]).strip()
+            cuit = str(fila_32[5]).strip()
+            clave = f"{tipo}|{pv}|{nro}|{cuit}"
+
+            if not clave.strip("|"):
+                continue  # fila vacía
+
+            if clave in filas_por_clave:
+                duplicados += 1
+                anterior = filas_por_clave[clave]
+                nueva_no_vacias = sum(1 for c in fila_32 if str(c).strip())
+                ant_no_vacias = sum(1 for c in anterior if str(c).strip())
+                if nueva_no_vacias > ant_no_vacias:
+                    filas_por_clave[clave] = fila_32
+            else:
+                filas_por_clave[clave] = fila_32
+
+    buf = _io.StringIO()
+    w = _csv.writer(buf, delimiter=";", lineterminator="\r\n")
+    w.writerow(list(AJ.HEADER_PORTAL_IVA))
+    for fila in filas_por_clave.values():
+        w.writerow(fila)
+
+    csv_bytes = buf.getvalue().encode("utf-8-sig")
+    stats = {
+        "archivos": len(archivos_bytes),
+        "total_leidas": total_leidas,
+        "duplicados": duplicados,
+        "final": len(filas_por_clave),
+    }
+    return csv_bytes, stats
+
+
 def seccion_afip():
     st.title("📥 AFIP (Portal IVA) → JWIN con rubros")
     st.caption(
         "Subí el **CSV de AFIP** (Mis Comprobantes → Recibidos) y tu **Excel maestro** "
         "(con las hojas Proveedores y Rubros). La app le agrega la columna **Rubro** "
-        "buscando el CUIT del emisor, y te deja el archivo listo para importar a JWIN."
+        "buscando el CUIT del emisor, y te deja el archivo listo para importar a JWIN. "
+        "Podés subir **varios CSVs a la vez** (ej. el de ARCA + el de Facturas por foto) "
+        "y la app los unifica sacando los duplicados."
     )
 
     c1, c2 = st.columns(2)
     with c1:
-        up_csv = st.file_uploader("Archivo a procesar (.csv, .xlsx o .xls)",
+        up_csv = st.file_uploader("Archivo(s) a procesar (.csv, .xlsx o .xls)",
                                   type=["csv", "xlsx", "xls"], key="afip_csv",
-                                  help="Podés subir el CSV de ARCA (Portal IVA) "
-                                       "o un CSV generado por Facturas por foto.")
+                                  accept_multiple_files=True,
+                                  help="Podés subir 1 archivo (CSV de ARCA o CSV de "
+                                       "Facturai) o varios juntos — se unifican y "
+                                       "deduplican por Tipo+PV+Nro+CUIT.")
     with c2:
         up_maestro = st.file_uploader("Excel maestro (Proveedores/Rubros) (.xlsx)",
                                       type=["xlsx"], key="afip_maestro")
@@ -1070,21 +1160,45 @@ def seccion_afip():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-    if up_csv is None or up_maestro is None:
-        st.info("Subí los dos archivos: el CSV de AFIP y tu Excel maestro de proveedores.")
+    if not up_csv or up_maestro is None:
+        st.info("Subí los archivos: al menos un CSV (de AFIP o de Facturas por foto) "
+                "y tu Excel maestro de proveedores.")
         return
 
-    csv_bytes = up_csv.getvalue()
     maestro_bytes = up_maestro.getvalue()
+
+    # -------------------------------------------------------------------- #
+    # Si vinieron varios archivos, los unifico primero (dedup por
+    # Tipo+PV+Nro+CUIT, gana la fila con más datos). El resultado ya viene
+    # normalizado (R+S movidos a K) para no volver a normalizarlo abajo.
+    # -------------------------------------------------------------------- #
+    unificado = len(up_csv) >= 2
+    if unificado:
+        archivos_bytes = [f.getvalue() for f in up_csv]
+        csv_bytes, u_stats = _unificar_csvs_portal_iva(archivos_bytes)
+        st.subheader("🔗 Unificación de archivos")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Archivos", u_stats["archivos"])
+        c2.metric("Filas leídas", u_stats["total_leidas"])
+        c3.metric("Duplicados quitados", u_stats["duplicados"])
+        c4.metric("Comprobantes finales", u_stats["final"])
+        st.success(
+            f"✅ Se unificaron {u_stats['archivos']} archivos en un único CSV con "
+            f"**{u_stats['final']}** comprobantes ({u_stats['duplicados']} duplicados "
+            "eliminados — quedó la fila más completa)."
+        )
+    else:
+        csv_bytes = up_csv[0].getvalue()
 
     # -------------------------------------------------------------------- #
     # Paso previo: si es el CSV crudo del Portal IVA, normalizarlo antes
     # de mapear rubros. Mueve Impuestos Internos y Otros Tributos al No
     # Gravado para que JWIN no descuadre las facturas (JWIN importa por
     # posición y no tiene esas dos columnas).
+    # (Si vino unificado, ya está normalizado — saltea este paso.)
     # -------------------------------------------------------------------- #
     mes_periodo = None
-    if AJ.es_csv_portal_iva(csv_bytes):
+    if not unificado and AJ.es_csv_portal_iva(csv_bytes):
         norm = AJ.normalizar_portal_iva(csv_bytes)
 
         if norm["errores_header"]:
