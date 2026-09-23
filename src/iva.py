@@ -63,9 +63,33 @@ def es_nota_credito(tipo: str) -> bool:
     return "NOTA DE CREDITO" in s or "NOTA DE CRÉDITO" in s or "NOTA CREDITO" in s
 
 
+def _detectar_fila_encabezado(archivo, hoja: str) -> int:
+    """
+    Autodetecta la fila del encabezado real: es la primera que contiene tanto
+    'Fecha' como 'Tipo' entre sus celdas.
+
+    ARCA descarga el Excel con la fila 1 como título ("Mis Comprobantes
+    Emitidos") y la fila 2 como encabezado. Otras versiones traen el
+    encabezado en fila 1. Esta función detecta cualquiera de los dos casos
+    sin obligar al usuario a borrar filas antes de subir.
+    """
+    # Leemos las primeras 10 filas sin header para inspeccionarlas.
+    prev = pd.read_excel(archivo, sheet_name=hoja, header=None, nrows=10)
+    for i, fila in prev.iterrows():
+        celdas = [str(c).strip().lower() for c in fila if pd.notna(c)]
+        if any("fecha" == c or c.startswith("fecha ") for c in celdas) and \
+           any(c == "tipo" or c.startswith("tipo ") for c in celdas):
+            return i
+    return 0  # fallback: primera fila
+
+
 def cargar_archivo_afip(archivo, hoja: Optional[str] = None) -> pd.DataFrame:
     """
-    Carga un Excel 'Mis Comprobantes' (AFIP) y devuelve un DataFrame normalizado.
+    Carga un Excel 'Mis Comprobantes' (AFIP/ARCA) y devuelve un DataFrame
+    normalizado. Autodetecta la fila del encabezado (típicamente ARCA pone
+    'Mis Comprobantes Emitidos/Recibidos' en la fila 1 y el encabezado real
+    en la fila 2 — este parser lo maneja sin que el usuario tenga que
+    borrar la fila del título).
 
     Columnas de salida:
 
@@ -83,7 +107,10 @@ def cargar_archivo_afip(archivo, hoja: Optional[str] = None) -> pd.DataFrame:
 
     xl = pd.ExcelFile(archivo)
     hoja = hoja or xl.sheet_names[0]
-    raw = pd.read_excel(archivo, sheet_name=hoja, header=0)
+
+    # Autodetectar fila de encabezado (0 = fila 1, 1 = fila 2, etc.)
+    fila_encab = _detectar_fila_encabezado(archivo, hoja)
+    raw = pd.read_excel(archivo, sheet_name=hoja, header=fila_encab)
     raw.columns = [str(c).strip() for c in raw.columns]
 
     cols = list(raw.columns)
