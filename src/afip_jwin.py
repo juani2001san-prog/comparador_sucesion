@@ -66,7 +66,11 @@ _COL_TOTAL_NETO_GRAVADO = 30  # AE: suma de los netos con IVA 2,5% a 27% (NO inc
 _COL_TOTAL_IVA = 31           # AF
 
 # Tolerancia de redondeo al validar cuadre por comprobante.
-_TOLERANCIA = 0.05
+# ARCA redondea cada alícuota al centavo, por eso la suma de las columnas
+# puede quedar hasta ~10 centavos del Total de cabecera en facturas que
+# tienen muchas alícuotas o percepciones. Con $0,05 saltaba descuadres
+# que eran puros redondeos de ARCA (ej. 28000,00 vs suma 27999,93).
+_TOLERANCIA = 0.10
 
 
 def _norm_cabecera(s):
