@@ -718,3 +718,270 @@ def construir_excel(encab, filas, desconocidos, rubros):
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+# ======================================================================= #
+# VENTAS — Portal IVA Ventas → JWIN
+# ======================================================================= #
+# Layout del CSV de Portal IVA Ventas: 33 columnas (una más que Compras).
+# Diferencias con Compras:
+#   - Col E: "Número de Comprobante Hasta" (no existe en compras)
+#   - Col F/G/H: "Tipo Doc. / Nro. Doc. / Denominación Comprador"
+#   - Col I: "Fecha de Vencimiento del Pago" (no existe en compras)
+#   - Col J: "Importe Total"  (en compras es col H)
+#   - No tiene "Crédito Fiscal Computable" (que compras tiene en col M)
+#   - Col R: "Percepción a No Categorizados" (reemplaza "Perc./Pagos IVA" de compras)
+#
+# Al momento NO movemos columnas en ventas: solo normalizamos (descartar filas
+# sin CUIT) y validamos cuadre. El rubro se agrega al final.
+
+HEADER_PORTAL_IVA_VENTAS = [
+    "Fecha de Emisión", "Tipo de Comprobante", "Punto de Venta",
+    "Número de Comprobante", "Número de Comprobante Hasta",
+    "Tipo Doc. Comprador", "Nro. Doc. Comprador", "Denominación Comprador",
+    "Fecha de Vencimiento del Pago",
+    "Importe Total", "Moneda Original", "Tipo de Cambio",
+    "Importe No Gravado", "Importe Exento",
+    "Importe de Per. o Pagos a Cta. de Otros Imp. Nac.",
+    "Importe de Percepciones de Ingresos Brutos",
+    "Importe de Impuestos Municipales",
+    "Percepción a No Categorizados",
+    "Importe de Impuestos Internos", "Importe Otros Tributos",
+    "Neto Gravado IVA 0%",
+    "Neto Gravado IVA 2,5%", "Importe IVA 2,5%",
+    "Neto Gravado IVA 5%", "Importe IVA 5%",
+    "Neto Gravado IVA 10,5%", "Importe IVA 10,5%",
+    "Neto Gravado IVA 21%", "Importe IVA 21%",
+    "Neto Gravado IVA 27%", "Importe IVA 27%",
+    "Total Neto Gravado", "Total IVA",
+]
+
+# Índices (0-based) de las columnas de ventas.
+_VENTAS_COL_FECHA = 0
+_VENTAS_COL_CUIT = 6              # G: Nro. Doc. Comprador
+_VENTAS_COL_DENOMINACION = 7      # H: Denominación Comprador
+_VENTAS_COL_TOTAL = 9             # J: Importe Total
+_VENTAS_COL_NO_GRAVADO = 12       # M: Importe No Gravado
+_VENTAS_COL_EXENTO = 13           # N: Importe Exento
+_VENTAS_COL_PERCEPCIONES = (14, 15, 16, 17)  # O-R: 4 cols de percepciones
+_VENTAS_COL_IMP_INTERNOS = 18     # S: Importe de Impuestos Internos
+_VENTAS_COL_OTROS_TRIBUTOS = 19   # T: Importe Otros Tributos
+_VENTAS_COL_NETO_IVA_0 = 20       # U: Neto Gravado IVA 0%
+_VENTAS_COL_TOTAL_NETO = 31       # AF: Total Neto Gravado
+_VENTAS_COL_TOTAL_IVA = 32        # AG: Total IVA
+
+
+def es_csv_portal_iva_ventas(csv_bytes):
+    """True si el archivo parece ser el CSV crudo del Portal IVA (Ventas)."""
+    try:
+        filas = _leer_csv_afip(csv_bytes)
+    except Exception:
+        return False
+    if not filas:
+        return False
+    encab = [_norm_cabecera(c) for c in filas[0]]
+    esperados = [_norm_cabecera(h) for h in HEADER_PORTAL_IVA_VENTAS]
+    # Chequeo laxo: primeras 5 columnas + columnas clave para distinguir de compras.
+    if encab[:5] != esperados[:5]:
+        return False
+    for i in (_VENTAS_COL_CUIT, _VENTAS_COL_TOTAL, _VENTAS_COL_NO_GRAVADO):
+        if i >= len(encab) or encab[i] != esperados[i]:
+            return False
+    return True
+
+
+def _validar_encabezado_ventas(encab_original):
+    """Compara el encabezado del CSV de ventas con el esperado."""
+    diffs = []
+    esperados_n = [_norm_cabecera(h) for h in HEADER_PORTAL_IVA_VENTAS]
+    encab_n = [_norm_cabecera(c) for c in encab_original]
+    if len(encab_n) < len(esperados_n):
+        diffs.append(
+            f"El archivo tiene {len(encab_n)} columnas pero el Portal IVA Ventas "
+            f"usa {len(esperados_n)}. Puede ser un layout distinto."
+        )
+    for i, (esp, act) in enumerate(zip(esperados_n, encab_n)):
+        if esp != act:
+            col_letra = _letra_columna(i)
+            diffs.append(
+                f"Columna {col_letra} (posición {i+1}): se esperaba "
+                f"«{HEADER_PORTAL_IVA_VENTAS[i]}» y vino «{encab_original[i]}»."
+            )
+    return diffs
+
+
+def _detectar_mes_ventas(filas_datos):
+    """Devuelve 'MM-AAAA' según la fecha más frecuente (col A)."""
+    meses = []
+    for fila in filas_datos:
+        if _VENTAS_COL_FECHA >= len(fila):
+            continue
+        s = str(fila[_VENTAS_COL_FECHA] or "").strip()
+        try:
+            d = datetime.strptime(s[:10], "%d/%m/%Y")
+        except ValueError:
+            try:
+                d = datetime.strptime(s[:10], "%Y-%m-%d")
+            except ValueError:
+                continue
+        meses.append(f"{d.month:02d}-{d.year}")
+    if not meses:
+        return datetime.now().strftime("%m-%Y")
+    return Counter(meses).most_common(1)[0][0]
+
+
+def normalizar_portal_iva_ventas(csv_bytes):
+    """
+    Normaliza el CSV crudo del Portal IVA Ventas antes de importarlo a JWIN.
+
+    Reglas:
+      1. Descarta filas sin CUIT válido de 11 dígitos del comprador (elimina
+         la fila de totales y las líneas vacías del final).
+      2. Valida por comprobante que
+             Total = Neto + No Gravado + Exento + IVA + percepciones + Imp. Int. + Otros Tr.
+         con tolerancia _TOLERANCIA.
+      3. Reescribe el CSV con el mismo formato que ARCA.
+
+    Devuelve el mismo dict que normalizar_portal_iva (compras), más
+    'encabezado_salida' con las 33 cols de ventas.
+    """
+    filas = _leer_csv_afip(csv_bytes)
+    if not filas:
+        return {
+            "csv_bytes": None, "encabezado": [], "comprobantes": 0,
+            "descartados": [], "descuadres": [],
+            "mes_periodo": datetime.now().strftime("%m-%Y"),
+            "errores_header": ["El archivo está vacío."],
+        }
+
+    encab = list(filas[0])
+    diffs = _validar_encabezado_ventas(encab)
+    if diffs:
+        return {
+            "csv_bytes": None, "encabezado": encab, "comprobantes": 0,
+            "descartados": [], "descuadres": [],
+            "mes_periodo": datetime.now().strftime("%m-%Y"),
+            "errores_header": diffs,
+        }
+
+    descartados = []
+    descuadres = []
+    filas_out = []
+
+    for i, fila in enumerate(filas[1:], start=2):
+        f = list(fila) + [""] * (len(HEADER_PORTAL_IVA_VENTAS) - len(fila))
+
+        cuit = _cuit_valido(f[_VENTAS_COL_CUIT])
+        if not cuit:
+            resumen = " | ".join(str(c) for c in fila[:8] if str(c).strip())
+            descartados.append({
+                "fila": i,
+                "motivo": "Sin CUIT válido de 11 dígitos",
+                "contenido": resumen or "(fila vacía)",
+            })
+            continue
+
+        total = _num_ar(f[_VENTAS_COL_TOTAL])
+        neto_grav = _num_ar(f[_VENTAS_COL_TOTAL_NETO])
+        neto_iva0 = _num_ar(f[_VENTAS_COL_NETO_IVA_0])
+        no_grav = _num_ar(f[_VENTAS_COL_NO_GRAVADO])
+        exento = _num_ar(f[_VENTAS_COL_EXENTO])
+        iva = _num_ar(f[_VENTAS_COL_TOTAL_IVA])
+        perc = sum(_num_ar(f[c]) for c in _VENTAS_COL_PERCEPCIONES)
+        imp_int = _num_ar(f[_VENTAS_COL_IMP_INTERNOS])
+        otros = _num_ar(f[_VENTAS_COL_OTROS_TRIBUTOS])
+        calc = round(neto_grav + neto_iva0 + no_grav + exento + iva + perc + imp_int + otros, 2)
+
+        if abs(calc) > _TOLERANCIA:
+            dif = round(total - calc, 2)
+            if abs(dif) > _TOLERANCIA:
+                descuadres.append({
+                    "fila": i,
+                    "fecha": str(f[_VENTAS_COL_FECHA] or "").strip(),
+                    "cuit": cuit,
+                    "denominacion": str(f[_VENTAS_COL_DENOMINACION] or "").strip(),
+                    "total": total,
+                    "calculado": calc,
+                    "diferencia": dif,
+                })
+
+        filas_out.append(f)
+
+    mes_periodo = _detectar_mes_ventas(filas_out)
+
+    csv_out = None
+    if not descuadres:
+        buf = io.StringIO()
+        w = csv.writer(buf, delimiter=";", lineterminator="\r\n")
+        w.writerow(encab)
+        for f in filas_out:
+            w.writerow(f)
+        csv_out = buf.getvalue().encode("utf-8-sig")
+
+    return {
+        "csv_bytes": csv_out,
+        "encabezado": encab,
+        "comprobantes": len(filas_out),
+        "descartados": descartados,
+        "descuadres": descuadres,
+        "mes_periodo": mes_periodo,
+        "errores_header": [],
+    }
+
+
+def procesar_ventas(csv_bytes, rubro_default, excepciones=None):
+    """
+    Procesa el CSV normalizado de ventas y le agrega la columna Rubro.
+
+    Args:
+        csv_bytes: bytes del CSV (ya normalizado o crudo — si es crudo, se normaliza).
+        rubro_default: código de rubro para todas las filas (int).
+        excepciones: dict opcional {cuit → rubro_cod} para aplicar otro rubro por cliente.
+
+    Returns:
+        (encab, filas, stats) donde:
+          - encab: encabezado con "Rubro" al final (34 cols)
+          - filas: lista de filas con las 34 columnas (33 ARCA + Rubro)
+          - stats: {"comprobantes": int, "asignados": int, "con_excepcion": int}
+    """
+    excepciones = excepciones or {}
+
+    # Si viene crudo, normalizar primero.
+    if es_csv_portal_iva_ventas(csv_bytes):
+        norm = normalizar_portal_iva_ventas(csv_bytes)
+        if norm["errores_header"] or norm["descuadres"]:
+            raise ValueError("El CSV tiene descuadres o problemas de encabezado.")
+        csv_bytes = norm["csv_bytes"]
+
+    filas = _leer_csv_afip(csv_bytes)
+    if not filas:
+        raise ValueError("CSV vacío")
+
+    encab = list(filas[0]) + ["Rubro"]
+    con_excepcion = 0
+    out = []
+    for fila in filas[1:]:
+        f = list(fila) + [""] * (len(HEADER_PORTAL_IVA_VENTAS) - len(fila))
+        cuit = _cuit_valido(f[_VENTAS_COL_CUIT])
+        if cuit and cuit in excepciones:
+            rubro = str(excepciones[cuit])
+            con_excepcion += 1
+        else:
+            rubro = str(rubro_default)
+        out.append(f + [rubro])
+
+    return encab, out, {
+        "comprobantes": len(out),
+        "asignados": len(out),  # todos tienen rubro (al menos el default)
+        "con_excepcion": con_excepcion,
+    }
+
+
+def construir_csv_ventas(encab, filas):
+    """Construye el CSV de ventas listo para JWIN (';' + coma decimal + CRLF + BOM UTF-8)."""
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";", lineterminator="\r\n")
+    w.writerow(encab)
+    for f in filas:
+        w.writerow(f)
+    return buf.getvalue().encode("utf-8-sig")

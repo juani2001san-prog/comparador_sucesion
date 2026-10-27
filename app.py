@@ -1380,6 +1380,182 @@ def seccion_afip():
 # Sección: Rango — Compras (Paradigma) → Ordenado
 # --------------------------------------------------------------------------- #
 
+def seccion_afip_ventas():
+    st.title("📤 AFIP Ventas (Portal IVA) → JWIN con rubro")
+    st.caption(
+        "Subí el **CSV crudo de Ventas** del Portal IVA (Mis Comprobantes → Emitidos). "
+        "Elegís el rubro default que va a llevar la mayoría de las ventas y, opcionalmente, "
+        "cargás excepciones para clientes puntuales. Bajás el archivo listo para JWIN."
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        up_csv = st.file_uploader(
+            "CSV de Ventas (Portal IVA)",
+            type=["csv"], key="afip_ventas_csv",
+        )
+    with c2:
+        up_maestro = st.file_uploader(
+            "Excel maestro de rubros — opcional",
+            type=["xlsx"], key="afip_ventas_maestro",
+            help="Mismo formato que el maestro de compras (hojas Proveedores + Rubros). "
+                 "Si lo subís, se usa para completar nombres de rubros en el selector. "
+                 "Si tenés algún cliente con rubro específico, podés cargarlo en la hoja "
+                 "Proveedores (CUIT → código de rubro).",
+        )
+
+    if up_csv is None:
+        st.info("Subí el CSV crudo del Portal IVA de Ventas.")
+        return
+
+    # --- Rubros del maestro (opcional) ------------------------------------- #
+    rubros_dict: dict[int, str] = {}
+    excepciones_cuit: dict[str, int] = {}
+    if up_maestro is not None:
+        try:
+            provs, _razones, rubros_dict = AJ._leer_maestro(up_maestro.getvalue())
+            excepciones_cuit = provs
+        except Exception as exc:  # noqa: BLE001
+            st.warning(f"No pude leer el maestro: {exc}")
+
+    # --- Normalizar y validar cuadres -------------------------------------- #
+    csv_bytes = up_csv.getvalue()
+    if not AJ.es_csv_portal_iva_ventas(csv_bytes):
+        st.error(
+            "El archivo no parece ser el CSV crudo del Portal IVA de Ventas. "
+            "Fijate que lo hayas descargado desde Mis Comprobantes → Emitidos "
+            "en el Portal IVA (no desde 'Mis Comprobantes' tradicional)."
+        )
+        return
+
+    norm = AJ.normalizar_portal_iva_ventas(csv_bytes)
+    if norm["errores_header"]:
+        st.error("El encabezado del CSV no coincide con el layout del Portal IVA Ventas.")
+        for e in norm["errores_header"]:
+            st.write(f"• {e}")
+        return
+
+    st.subheader("🧾 Normalización del CSV")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Comprobantes", norm["comprobantes"])
+    c2.metric("Filas descartadas", len(norm["descartados"]))
+    c3.metric("Descuadres", len(norm["descuadres"]))
+
+    if norm["descartados"]:
+        with st.expander(f"Ver filas descartadas ({len(norm['descartados'])})"):
+            st.caption("Filas sin CUIT válido de 11 dígitos del comprador.")
+            st.dataframe(pd.DataFrame(norm["descartados"]),
+                         use_container_width=True, hide_index=True)
+
+    if norm["descuadres"]:
+        st.error(
+            f"❌ Hay {len(norm['descuadres'])} comprobante(s) que no cuadran "
+            f"(Total ≠ Neto + No Gravado + Exento + IVA + percepciones + Imp.Internos + "
+            f"Otros Tr., tolerancia $0,10). No se puede bajar el archivo hasta que se "
+            "resuelvan en el Portal IVA."
+        )
+        st.dataframe(
+            pd.DataFrame(norm["descuadres"]),
+            use_container_width=True, hide_index=True,
+            column_config={
+                "total": st.column_config.NumberColumn("Total cabecera", format="%.2f"),
+                "calculado": st.column_config.NumberColumn("Suma columnas", format="%.2f"),
+                "diferencia": st.column_config.NumberColumn("Diferencia", format="%.2f"),
+            },
+        )
+        return
+
+    csv_bytes = norm["csv_bytes"]
+    mes_periodo = norm["mes_periodo"]
+    st.success(f"✅ CSV normalizado sin descuadres. Período: **{mes_periodo}**")
+
+    # --- Rubro default ----------------------------------------------------- #
+    st.subheader("🎯 Rubro default")
+    if rubros_dict:
+        opciones = {f"{c} — {d}": c for c, d in sorted(rubros_dict.items())}
+        key_sel = st.selectbox(
+            "Rubro para TODAS las ventas",
+            list(opciones.keys()),
+            key="afip_ventas_rubro_sel",
+        )
+        rubro_default = opciones[key_sel]
+    else:
+        rubro_default = st.number_input(
+            "Código de rubro para TODAS las ventas",
+            min_value=1, max_value=99, value=4, step=1,
+            key="afip_ventas_rubro",
+            help="Si tenés un maestro con la hoja Rubros, subilo arriba para elegir "
+                 "por nombre en vez de código.",
+        )
+
+    # --- Excepciones por CUIT (opcional, inline) --------------------------- #
+    st.subheader("⚡ Excepciones por cliente (opcional)")
+    st.caption(
+        "Si algún cliente debe llevar un rubro distinto al default, cargalo acá. "
+        "El resto queda con el default."
+    )
+    base_exc = pd.DataFrame([
+        {"CUIT": c, "Rubro": r} for c, r in sorted(excepciones_cuit.items())
+    ]) if excepciones_cuit else pd.DataFrame(columns=["CUIT", "Rubro"])
+    editado = st.data_editor(
+        base_exc, hide_index=True, num_rows="dynamic", use_container_width=True,
+        key="afip_ventas_excepciones",
+        column_config={
+            "CUIT": st.column_config.TextColumn("CUIT (11 dígitos)"),
+            "Rubro": st.column_config.NumberColumn("Rubro", min_value=1, max_value=99, step=1),
+        },
+    )
+    excepciones_final: dict[str, int] = {}
+    for _, row in editado.iterrows():
+        cuit_s = "".join(c for c in str(row["CUIT"] or "") if c.isdigit())
+        if len(cuit_s) == 11 and pd.notna(row["Rubro"]):
+            try:
+                excepciones_final[cuit_s] = int(row["Rubro"])
+            except (TypeError, ValueError):
+                continue
+
+    # --- Procesar ---------------------------------------------------------- #
+    try:
+        encab, filas, stats = AJ.procesar_ventas(
+            csv_bytes, int(rubro_default), excepciones_final)
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"No pude procesar: {exc}")
+        return
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Comprobantes", stats["comprobantes"])
+    m2.metric("Con rubro default", stats["comprobantes"] - stats["con_excepcion"])
+    m3.metric("Con excepción", stats["con_excepcion"])
+
+    with st.expander("Ver tabla (fecha, cliente, total, rubro)"):
+        try:
+            i_fecha = encab.index(next(h for h in encab if "Fecha de Emis" in h))
+            i_cuit = encab.index(next(h for h in encab if "Nro. Doc. Comprador" in h))
+            i_deno = encab.index(next(h for h in encab if "Denominación Comprador" in h))
+            i_total = encab.index(next(h for h in encab if h.strip() == "Importe Total"))
+        except StopIteration:
+            i_fecha, i_cuit, i_deno, i_total = 0, 6, 7, 9
+        vista = pd.DataFrame([
+            {
+                "Fecha": f[i_fecha] if i_fecha < len(f) else "",
+                "CUIT": f[i_cuit] if i_cuit < len(f) else "",
+                "Cliente": f[i_deno] if i_deno < len(f) else "",
+                "Total": f[i_total] if i_total < len(f) else "",
+                "Rubro": f[-1],
+            }
+            for f in filas
+        ])
+        st.dataframe(vista, use_container_width=True, hide_index=True)
+
+    sufijo = mes_periodo or datetime.now().strftime("%m-%Y")
+    st.download_button(
+        "⬇️ CSV para importar a JWIN (Ventas)",
+        data=AJ.construir_csv_ventas(encab, filas),
+        file_name=f"Ventas_JWIN_{sufijo}.csv",
+        mime="text/csv", use_container_width=True,
+    )
+
+
 def seccion_rango():
     st.title("📦 Rango — Compras (Paradigma) → Ordenado")
     st.caption(
@@ -3201,7 +3377,8 @@ _GRUPOS = [
     ("🔧 Conversiones entre sistemas", [
         ("facturai",     "📸  Facturas por foto → Excel",           lambda: seccion_facturai()),
         ("ps3",          "📒  JWIN → PS3 (MICROENV)",               lambda: seccion_ps3()),
-        ("afip",         "📥  AFIP → JWIN (rubros)",                lambda: seccion_afip()),
+        ("afip",         "📥  AFIP Compras → JWIN (rubros)",        lambda: seccion_afip()),
+        ("afip_ventas",  "📤  AFIP Ventas → JWIN (rubro)",          lambda: seccion_afip_ventas()),
         ("ventas",       "🧾  Ventas por actividad (Tango)",        lambda: seccion_ventas()),
         ("rango",        "📦  Rango — Compras (Paradigma)",         lambda: seccion_rango()),
     ]),
