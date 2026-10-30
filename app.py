@@ -30,6 +30,7 @@ from src import afip_jwin as AJ
 from src import rango_compras as RC
 from src import monotributo as MT
 from src import iva as IVA
+from src import txt_ps3 as TP
 from src.normalizar import formato_ar
 
 st.set_page_config(page_title="Herramientas del estudio", page_icon="🐣", layout="wide")
@@ -1553,6 +1554,95 @@ def seccion_afip_ventas():
         data=AJ.construir_csv_ventas(encab, filas),
         file_name=f"Ventas_JWIN_{sufijo}.csv",
         mime="text/csv", use_container_width=True,
+    )
+
+
+def seccion_txt_ps3():
+    st.title("📒 TXT → PS3 (equivalencias de cuentas)")
+    st.caption(
+        "Subí el **TXT** (export del sistema de origen, OREGUI por ejemplo) "
+        "y el **Excel de equivalencias** (hojas con columnas `CODIGO` y "
+        "`CDOJWIN`). La app reemplaza en cada línea el código de cuenta "
+        "origen por el equivalente del plan destino y te devuelve el **.PS3**."
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        up_txt = st.file_uploader("TXT origen (.txt)", type=["txt"],
+                                  key="txtps3_txt")
+    with c2:
+        up_equiv = st.file_uploader("Equivalencias (.xlsx)", type=["xlsx"],
+                                    key="txtps3_equiv")
+
+    if up_txt is None or up_equiv is None:
+        st.info("Subí los dos archivos: el TXT origen y el Excel de equivalencias.")
+        return
+
+    # Leer equivalencias
+    try:
+        equiv, sin_destino = TP.leer_equivalencias(up_equiv.getvalue())
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"No pude leer las equivalencias: {exc}")
+        return
+
+    c1, c2 = st.columns(2)
+    c1.metric("Equivalencias cargadas", len(equiv))
+    c2.metric("Códigos sin CDOJWIN en Excel", len(sin_destino))
+
+    if sin_destino:
+        with st.expander(f"Códigos del Excel sin CDOJWIN ({len(sin_destino)})"):
+            st.caption("Estos códigos están en el Excel pero no tienen "
+                       "equivalencia destino cargada. Si aparecen en el TXT, "
+                       "la línea queda sin reemplazar.")
+            st.write(", ".join(sin_destino))
+
+    omitir = st.checkbox(
+        "Omitir del PS3 las líneas con cuentas que NO tengan equivalencia",
+        value=False, key="txtps3_omitir",
+        help="Si está destildado (default), esas líneas se incluyen tal cual "
+             "vinieron (con el código original). Tildalo si preferís un PS3 "
+             "más limpio aunque se pierdan movimientos.",
+    )
+
+    # Convertir
+    try:
+        ps3_bytes, stats = TP.convertir(
+            up_txt.getvalue(), equiv, omitir_sin_equivalencia=omitir)
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"No pude convertir el TXT: {exc}")
+        return
+
+    st.divider()
+    st.subheader("Resultado")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Líneas entrada", stats["lineas_entrada"])
+    m2.metric("Líneas salida", stats["lineas_salida"])
+    m3.metric("Reemplazos OK", stats["reemplazos"])
+    m4.metric("Líneas con cuenta sin equiv.",
+              sum(stats["faltantes"].values()))
+
+    if stats["faltantes"]:
+        with st.expander(
+            f"🚨 Códigos del TXT sin equivalencia en el Excel "
+            f"({len(stats['faltantes'])} distintos, "
+            f"{sum(stats['faltantes'].values())} líneas)",
+            expanded=True,
+        ):
+            st.caption("Agregá estos códigos a la hoja Equivalencias para que "
+                       "sus líneas se traduzcan bien.")
+            df_falt = pd.DataFrame(
+                sorted(stats["faltantes"].items(), key=lambda x: -x[1]),
+                columns=["Código origen", "Ocurrencias"],
+            )
+            st.dataframe(df_falt, use_container_width=True, hide_index=True)
+
+    nombre_salida = (up_txt.name.rsplit(".", 1)[0] or "resultado") + ".PS3"
+    st.download_button(
+        "⬇️ Descargar PS3",
+        data=ps3_bytes,
+        file_name=nombre_salida,
+        mime="text/plain",
+        use_container_width=True,
     )
 
 
@@ -3377,6 +3467,7 @@ _GRUPOS = [
     ("🔧 Conversiones entre sistemas", [
         ("facturai",     "📸  Facturas por foto → Excel",           lambda: seccion_facturai()),
         ("ps3",          "📒  JWIN → PS3 (MICROENV)",               lambda: seccion_ps3()),
+        ("txtps3",       "📒  TXT → PS3 (con equivalencias)",       lambda: seccion_txt_ps3()),
         ("afip",         "📥  AFIP Compras → JWIN (rubros)",        lambda: seccion_afip()),
         ("afip_ventas",  "📤  AFIP Ventas → JWIN (rubro)",          lambda: seccion_afip_ventas()),
         ("ventas",       "🧾  Ventas por actividad (Tango)",        lambda: seccion_ventas()),
