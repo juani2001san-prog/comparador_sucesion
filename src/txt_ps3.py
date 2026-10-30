@@ -3,10 +3,10 @@
 Conversor TXT → PS3 reemplazando codigos de cuenta por sus equivalencias
 en el plan de cuentas destino.
 
-Pensado para el flujo de OREGUI (y cualquier otro cliente que mande el mismo
-layout de 64 chars por linea): cada linea tiene la misma estructura en el
-archivo origen y en el PS3 destino — lo unico que cambia son los chars 2-9
-(codigo de cuenta de 8 digitos).
+Para cualquier cliente que exporte sus registraciones con el layout de 64
+chars por linea: cada linea tiene la misma estructura en el archivo origen
+y en el PS3 destino — lo unico que cambia son los chars 2-9 (codigo de
+cuenta de 8 digitos).
 
 Layout de la linea (64 chars):
 

@@ -1560,10 +1560,10 @@ def seccion_afip_ventas():
 def seccion_txt_ps3():
     st.title("📒 TXT → PS3 (equivalencias de cuentas)")
     st.caption(
-        "Subí el **TXT** (export del sistema de origen, OREGUI por ejemplo) "
-        "y el **Excel de equivalencias** (hojas con columnas `CODIGO` y "
-        "`CDOJWIN`). La app reemplaza en cada línea el código de cuenta "
-        "origen por el equivalente del plan destino y te devuelve el **.PS3**."
+        "Subí el **TXT** (export del sistema contable de origen) y el "
+        "**Excel de equivalencias** (hojas con columnas `CODIGO` y `CDOJWIN`). "
+        "La app reemplaza en cada línea el código de cuenta origen por el "
+        "equivalente del plan destino y te devuelve el **.PS3**."
     )
 
     c1, c2 = st.columns(2)
