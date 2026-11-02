@@ -31,6 +31,7 @@ from src import rango_compras as RC
 from src import monotributo as MT
 from src import iva as IVA
 from src import txt_ps3 as TP
+from src import perc_iibb as PI
 from src.normalizar import formato_ar
 
 st.set_page_config(page_title="Herramientas del estudio", page_icon="🐣", layout="wide")
@@ -1554,6 +1555,50 @@ def seccion_afip_ventas():
         data=AJ.construir_csv_ventas(encab, filas),
         file_name=f"Ventas_JWIN_{sufijo}.csv",
         mime="text/csv", use_container_width=True,
+    )
+
+
+def seccion_perc_iibb():
+    st.title("💲 Percepción IIBB Rio Negro — Excel → TXT")
+    st.caption(
+        "Subí el **Excel** mensual de percepciones de IIBB (sistema propio) "
+        "y la app te devuelve el **TXT** listo para presentar, con el nombre "
+        "ya armado (`Per Ib Rn MM-AAAA  N lineas $ importe,XX.txt`)."
+    )
+
+    up_xls = st.file_uploader("Excel de percepciones (.xls / .xlsx)",
+                              type=["xls", "xlsx"], key="perc_xls")
+    if up_xls is None:
+        st.info("Subí el Excel para procesar.")
+        return
+
+    try:
+        txt_bytes, stats = PI.convertir(up_xls.getvalue())
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"No pude procesar el Excel: {exc}")
+        return
+
+    st.subheader("Resumen")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Líneas", stats["lineas"])
+    c2.metric("Importe total", formato_ar(stats["importe_total"]))
+    c3.metric("Período", stats["mes_periodo"])
+    c4.metric("Descartadas", stats["filas_descartadas"])
+
+    if stats["filas_descartadas"]:
+        st.warning(f"Se descartaron {stats['filas_descartadas']} filas por falta "
+                   "de CUIT válido, fecha o importes.")
+
+    with st.expander("Preview del TXT (primeras 20 líneas)"):
+        lineas = txt_bytes.decode("latin-1").splitlines()
+        st.code("\n".join(lineas[:20]), language="text")
+
+    st.download_button(
+        f"⬇️ Descargar TXT ({stats['nombre_sugerido']})",
+        data=txt_bytes,
+        file_name=stats["nombre_sugerido"],
+        mime="text/plain",
+        use_container_width=True,
     )
 
 
@@ -3463,6 +3508,7 @@ _GRUPOS = [
     ("💲 Impuestos", [
         ("iva",          "💲  Posición IVA",                        lambda: seccion_iva()),
         ("monotributo",  "📊  Monotributo — Recategorización",      lambda: seccion_monotributo()),
+        ("perc_iibb",    "💲  Percepción IIBB RN (Excel → TXT)",     lambda: seccion_perc_iibb()),
     ]),
     ("🔧 Conversiones entre sistemas", [
         ("facturai",     "📸  Facturas por foto → Excel",           lambda: seccion_facturai()),
