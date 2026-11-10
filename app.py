@@ -13,6 +13,7 @@ Ejecutar:
 from __future__ import annotations
 
 import io
+import os
 from datetime import datetime
 
 import pandas as pd
@@ -725,10 +726,19 @@ def seccion_banco_contab():
 # Sección: JWIN → PS3 (MICROENV)
 # --------------------------------------------------------------------------- #
 
+_PS3_PLAN_JSON = os.path.join(os.path.dirname(PS3.__file__), "plan_cuentas_microenv.json")
+
+
 @st.cache_data(show_spinner=False)
+def _ps3_plan_cacheado(firma):
+    # `firma` (fecha de modificación del JSON) es la clave de la caché:
+    # si se actualiza el plan de cuentas, se vuelve a leer sin reiniciar la app.
+    return PS3.cargar_plan(_PS3_PLAN_JSON)
+
+
 def _ps3_plan():
     """Carga el plan de cuentas fijo de MICROENV (CO válidos + correcciones)."""
-    return PS3.cargar_plan()
+    return _ps3_plan_cacheado(os.path.getmtime(_PS3_PLAN_JSON))
 
 
 def _ps3_bytes(resultado):
