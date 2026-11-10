@@ -1,4 +1,4 @@
-# Herramientas del estudio
+# Tareas del estudio
 
 App (Python + Streamlit) con varias herramientas del estudio contable:
 

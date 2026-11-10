@@ -34,7 +34,7 @@ from src import txt_ps3 as TP
 from src import perc_iibb as PI
 from src.normalizar import formato_ar
 
-st.set_page_config(page_title="Herramientas del estudio", page_icon="🐣", layout="wide")
+st.set_page_config(page_title="Tareas del estudio", page_icon="🐣", layout="wide")
 
 
 def _desactivar_traduccion() -> None:
@@ -3542,7 +3542,7 @@ def _password_ok() -> bool:
     if st.session_state.get("auth_ok"):
         return True
 
-    st.title("🔒 Herramientas del estudio")
+    st.title("🔒 Tareas del estudio")
     st.caption("Ingresá la contraseña para acceder.")
     with st.form("login"):
         pwd = st.text_input("Contraseña", type="password")
@@ -3566,7 +3566,7 @@ def main():
         st.session_state["seccion"] = _HERRAMIENTAS[0][0]
 
     with st.sidebar:
-        st.markdown("### 🐣 Herramientas del estudio")
+        st.markdown("### 🐣 Tareas del estudio")
         st.caption("Elegí una herramienta")
         for i, (grupo, items) in enumerate(_GRUPOS):
             if i > 0:
