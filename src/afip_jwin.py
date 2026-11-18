@@ -21,13 +21,18 @@ from datetime import date, datetime
 # --------------------------------------------------------------------------
 # Normalización previa: CSV crudo del Portal IVA (Compras) → CSV para JWIN
 # --------------------------------------------------------------------------
-# JWIN importa por posición de columna y no tiene conceptos para "Impuestos
-# Internos" ni "Otros Tributos". Si los dejamos, esos importes se pierden y la
-# factura queda descuadrada (el total de cabecera no coincide con la suma).
+# JWIN importa por posición de columna. Esta normalización se aplica ANTES del
+# mapeo de rubros y reacomoda los impuestos que trae ARCA:
 #
-# Esta normalización se aplica ANTES del mapeo de rubros: mueve el importe de
-# esas dos columnas al "No Gravado" y las pone en cero. Así el comprobante
-# cuadra y JWIN lo importa completo.
+#   - Exento (L) e Impuestos Municipales (P) → se suman al No Gravado (K) y
+#     quedan en 0.
+#   - Otros Tributos (S) → se suma a Per./Pagos a Cta. Otros Imp. Nac. (N) y
+#     queda en 0.
+#   - Impuestos Internos (R), Percepción IIBB (O) y Percepción IVA (Q) → quedan
+#     como vienen.
+#
+# Después controla que cada comprobante cierre:
+#   K + O + Q + R + N + Total Neto Gravado + Total IVA = Importe Total
 #
 # El layout está atado al encabezado actual del Portal IVA (32 columnas). Si
 # cambia, validar_encabezado_portal_iva() lo detecta y frena el proceso.
@@ -56,21 +61,43 @@ _COL_FECHA = 0
 _COL_CUIT_VENDEDOR = 5      # F: Nro. Doc. Vendedor
 _COL_DENOMINACION = 6       # G: Denominación Vendedor
 _COL_IMPORTE_TOTAL = 7      # H: Importe Total
-_COL_NO_GRAVADO = 10        # K: Importe No Gravado          ← destino
-_COL_EXENTO = 11            # L: Importe Exento
-_COL_PERCEPCIONES = (13, 14, 15, 16)  # N-Q: cuatro columnas de percepciones
-_COL_IMP_INTERNOS = 17      # R: Importe de Impuestos Internos  ← se suma a K
-_COL_OTROS_TRIBUTOS = 18    # S: Importe Otros Tributos         ← se suma a K
+_COL_TIPO = 1               # B: Tipo de Comprobante
+_COL_PUNTO_VENTA = 2        # C
+_COL_NUMERO = 3             # D
+_COL_NO_GRAVADO = 10        # K: Importe No Gravado          ← recibe L y P
+_COL_EXENTO = 11            # L: Importe Exento               ← se suma a K
+_COL_OTROS_IMP_NAC = 13     # N: Per. o Pagos a Cta. Otros Imp. Nac. ← recibe S
+_COL_PERC_IIBB = 14         # O: Percepciones IIBB (queda igual)
+_COL_IMP_MUNICIPALES = 15   # P: Impuestos Municipales        ← se suma a K
+_COL_PERC_IVA = 16          # Q: Percepciones IVA (queda igual)
+_COL_IMP_INTERNOS = 17      # R: Impuestos Internos (queda igual)
+_COL_OTROS_TRIBUTOS = 18    # S: Importe Otros Tributos       ← se suma a N
 _COL_NETO_GRAV_IVA_0 = 19   # T: Neto Gravado IVA 0% (facturas C/B usan solo esta)
 _COL_TOTAL_NETO_GRAVADO = 30  # AE: suma de los netos con IVA 2,5% a 27% (NO incluye 0%)
 _COL_TOTAL_IVA = 31           # AF
 
 # Tolerancia de redondeo al validar cuadre por comprobante.
-# ARCA redondea cada alícuota al centavo, por eso la suma de las columnas
-# puede quedar hasta ~10 centavos del Total de cabecera en facturas que
-# tienen muchas alícuotas o percepciones. Con $0,05 saltaba descuadres
-# que eran puros redondeos de ARCA (ej. 28000,00 vs suma 27999,93).
-_TOLERANCIA = 0.10
+_TOLERANCIA = 0.02
+# Ventas mantiene su tolerancia anterior (redondeos de ARCA por alícuota).
+_TOLERANCIA_VENTAS = 0.10
+
+# Comprobantes clase C (monotributistas): solo traen el total, no se controlan.
+# 11 = Factura C, 12 = Nota de Débito C, 13 = Nota de Crédito C, 15 = Recibo C.
+_TIPOS_CLASE_C = {11, 12, 13, 15}
+
+
+def _es_clase_c(tipo):
+    """True si el Tipo de Comprobante es de clase C ('11', '11 - Factura C', 'Factura C')."""
+    t = str(tipo or "").strip()
+    digitos = ""
+    for ch in t:
+        if ch.isdigit():
+            digitos += ch
+        else:
+            break
+    if digitos:
+        return int(digitos) in _TIPOS_CLASE_C
+    return t.upper().endswith(" C")
 
 
 def _norm_cabecera(s):
@@ -190,12 +217,12 @@ def normalizar_portal_iva(csv_bytes):
     Reglas:
       1. Descarta filas sin CUIT válido de 11 dígitos (elimina la fila de
          totales y las líneas vacías que ARCA deja al final).
-      2. No Gravado (col K) = No Gravado + Impuestos Internos (R) + Otros
-         Tributos (S). Pone R y S en cero para que no se dupliquen si más
-         adelante se mapean en JWIN.
-      3. Valida por comprobante que
-             Total = Neto + No Gravado + Exento + IVA + percepciones
-         con tolerancia de 0,05.
+      2. No Gravado (K) += Exento (L) + Imp. Municipales (P); L y P quedan en 0.
+         Otros Imp. Nac. (N) += Otros Tributos (S); S queda en 0.
+         Imp. Internos (R), Perc. IIBB (O) y Perc. IVA (Q) quedan como vienen.
+      3. Valida por comprobante (salvo clase C, que solo trae total) que
+             K + O + Q + R + N + Total Neto Gravado + Total IVA = Importe Total
+         con tolerancia de $0,02.
       4. Reescribe con el mismo formato que ARCA (';' + coma decimal + CRLF
          + BOM UTF-8) para no romper el mapeo por columna de JWIN.
 
@@ -204,9 +231,9 @@ def normalizar_portal_iva(csv_bytes):
         "csv_bytes":       bytes | None,   # None si hay descuadres
         "encabezado":      list[str],
         "comprobantes":    int,
-        "modificados":     [{fecha, cuit, denominacion, importe_movido}],
+        "modificados":     [{fecha, cuit, denominacion, comprobante, a_no_gravado, a_otros_imp_nac}],
         "descartados":     [{motivo, contenido}],
-        "descuadres":      [{fecha, cuit, denominacion, total, calculado, diferencia}],
+        "descuadres":      [{fila, fecha, proveedor, cuit, comprobante, total, calculado, diferencia}],
         "mes_periodo":     "MM-AAAA",
         "errores_header":  list[str],       # si no está vacía, no se procesó
       }
@@ -249,47 +276,59 @@ def normalizar_portal_iva(csv_bytes):
             })
             continue
 
-        no_grav = _num_ar(f[_COL_NO_GRAVADO])
-        imp_int = _num_ar(f[_COL_IMP_INTERNOS])
-        otros_tr = _num_ar(f[_COL_OTROS_TRIBUTOS])
-        movido = round(imp_int + otros_tr, 2)
+        fecha = str(f[_COL_FECHA] or "").strip()
+        deno = str(f[_COL_DENOMINACION] or "").strip()
+        comprobante = "-".join(
+            str(f[c] or "").strip() for c in (_COL_TIPO, _COL_PUNTO_VENTA, _COL_NUMERO)
+        )
 
-        if movido != 0:
-            nuevo_no_grav = round(no_grav + imp_int + otros_tr, 2)
-            f[_COL_NO_GRAVADO] = _fmt_ar(nuevo_no_grav)
-            f[_COL_IMP_INTERNOS] = "0"
+        no_grav = _num_ar(f[_COL_NO_GRAVADO])
+        exento = _num_ar(f[_COL_EXENTO])
+        municip = _num_ar(f[_COL_IMP_MUNICIPALES])
+        otros_nac = _num_ar(f[_COL_OTROS_IMP_NAC])
+        otros_tr = _num_ar(f[_COL_OTROS_TRIBUTOS])
+
+        a_k = round(exento + municip, 2)
+        if a_k != 0:
+            f[_COL_NO_GRAVADO] = _fmt_ar(round(no_grav + exento + municip, 2))
+            f[_COL_EXENTO] = "0"
+            f[_COL_IMP_MUNICIPALES] = "0"
+        if otros_tr != 0:
+            f[_COL_OTROS_IMP_NAC] = _fmt_ar(round(otros_nac + otros_tr, 2))
             f[_COL_OTROS_TRIBUTOS] = "0"
+        if a_k != 0 or otros_tr != 0:
             modificados.append({
-                "fecha": str(f[_COL_FECHA] or "").strip(),
+                "fecha": fecha,
                 "cuit": cuit,
-                "denominacion": str(f[_COL_DENOMINACION] or "").strip(),
-                "importe_movido": movido,
+                "denominacion": deno,
+                "comprobante": comprobante,
+                "a_no_gravado": a_k,
+                "a_otros_imp_nac": round(otros_tr, 2),
             })
 
-        # Validación de cuadre (con los valores ya normalizados).
-        # OJO: "Total Neto Gravado" (AE) suma los netos con IVA 2,5% al 27%,
-        # pero NO incluye "Neto Gravado IVA 0%" (T). Las facturas C/B a menudo
-        # usan solo la columna T, así que hay que sumarla explícitamente.
-        total = _num_ar(f[_COL_IMPORTE_TOTAL])
-        neto_grav = _num_ar(f[_COL_TOTAL_NETO_GRAVADO])
-        neto_iva0 = _num_ar(f[_COL_NETO_GRAV_IVA_0])
-        no_grav_n = _num_ar(f[_COL_NO_GRAVADO])
-        exento = _num_ar(f[_COL_EXENTO])
-        iva = _num_ar(f[_COL_TOTAL_IVA])
-        perc = sum(_num_ar(f[c]) for c in _COL_PERCEPCIONES)
-        calc = round(neto_grav + neto_iva0 + no_grav_n + exento + iva + perc, 2)
-        # Si calc == 0 y el total no, la fila NO tiene desglose para validar
-        # (típico de facturas B/C a consumidor final: solo viene el Total y el
-        # resto de columnas en cero). No es un descuadre, es una fila sin data
-        # para chequear — la dejamos pasar.
-        if abs(calc) > _TOLERANCIA:
+        # Control de cuadre (con los valores ya reacomodados):
+        #   K + O + Q + R + N + Total Neto Gravado + Total IVA = Importe Total
+        # Se excluyen los comprobantes clase C (solo traen total).
+        if not _es_clase_c(f[_COL_TIPO]):
+            total = _num_ar(f[_COL_IMPORTE_TOTAL])
+            calc = round(
+                _num_ar(f[_COL_NO_GRAVADO])
+                + _num_ar(f[_COL_PERC_IIBB])
+                + _num_ar(f[_COL_PERC_IVA])
+                + _num_ar(f[_COL_IMP_INTERNOS])
+                + _num_ar(f[_COL_OTROS_IMP_NAC])
+                + _num_ar(f[_COL_TOTAL_NETO_GRAVADO])
+                + _num_ar(f[_COL_TOTAL_IVA]),
+                2,
+            )
             dif = round(total - calc, 2)
             if abs(dif) > _TOLERANCIA:
                 descuadres.append({
                     "fila": i,
-                    "fecha": str(f[_COL_FECHA] or "").strip(),
+                    "fecha": fecha,
+                    "proveedor": deno,
                     "cuit": cuit,
-                    "denominacion": str(f[_COL_DENOMINACION] or "").strip(),
+                    "comprobante": comprobante,
                     "total": total,
                     "calculado": calc,
                     "diferencia": dif,
@@ -839,7 +878,7 @@ def normalizar_portal_iva_ventas(csv_bytes):
          la fila de totales y las líneas vacías del final).
       2. Valida por comprobante que
              Total = Neto + No Gravado + Exento + IVA + percepciones + Imp. Int. + Otros Tr.
-         con tolerancia _TOLERANCIA.
+         con tolerancia _TOLERANCIA_VENTAS.
       3. Reescribe el CSV con el mismo formato que ARCA.
 
     Devuelve el mismo dict que normalizar_portal_iva (compras), más
@@ -892,9 +931,9 @@ def normalizar_portal_iva_ventas(csv_bytes):
         otros = _num_ar(f[_VENTAS_COL_OTROS_TRIBUTOS])
         calc = round(neto_grav + neto_iva0 + no_grav + exento + iva + perc + imp_int + otros, 2)
 
-        if abs(calc) > _TOLERANCIA:
+        if abs(calc) > _TOLERANCIA_VENTAS:
             dif = round(total - calc, 2)
-            if abs(dif) > _TOLERANCIA:
+            if abs(dif) > _TOLERANCIA_VENTAS:
                 descuadres.append({
                     "fila": i,
                     "fecha": str(f[_VENTAS_COL_FECHA] or "").strip(),
