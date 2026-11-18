@@ -1061,7 +1061,7 @@ def _unificar_csvs_portal_iva(archivos_bytes: list[bytes]) -> tuple[bytes, dict]
 
     for data in archivos_bytes:
         # Si es el CSV crudo del Portal IVA, primero lo normalizo
-        # (L+P → No Gravado, S → Otros Imp. Nac.).
+        # (mueve Impuestos Internos + Otros Tributos → No Gravado).
         if AJ.es_csv_portal_iva(data):
             norm = AJ.normalizar_portal_iva(data)
             if norm["errores_header"] or norm["descuadres"]:
@@ -1204,8 +1204,9 @@ def seccion_afip():
 
     # -------------------------------------------------------------------- #
     # Paso previo: si es el CSV crudo del Portal IVA, normalizarlo antes
-    # de mapear rubros. Suma Exento y Municipales al No Gravado, Otros
-    # Tributos a Otros Imp. Nac., y controla que cada comprobante cierre.
+    # de mapear rubros. Mueve Impuestos Internos y Otros Tributos al No
+    # Gravado para que JWIN no descuadre las facturas (JWIN importa por
+    # posición y no tiene esas dos columnas).
     # (Si vino unificado, ya está normalizado — saltea este paso.)
     # -------------------------------------------------------------------- #
     mes_periodo = None
@@ -1223,7 +1224,7 @@ def seccion_afip():
         st.subheader("🧾 Normalización del CSV")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Comprobantes", norm["comprobantes"])
-        c2.metric("Modificados (L+P → K, S → N)", len(norm["modificados"]))
+        c2.metric("Modificados (R+S → K)", len(norm["modificados"]))
         c3.metric("Filas descartadas", len(norm["descartados"]))
         c4.metric("Descuadres", len(norm["descuadres"]))
 
@@ -1234,16 +1235,13 @@ def seccion_afip():
                     pd.DataFrame(norm["modificados"]),
                     use_container_width=True, hide_index=True,
                     column_config={
-                        "a_no_gravado": st.column_config.NumberColumn(
-                            "Exento + Municipales → No Gravado", format="%.2f"),
-                        "a_otros_imp_nac": st.column_config.NumberColumn(
-                            "Otros Tributos → Otros Imp. Nac.", format="%.2f"),
+                        "importe_movido": st.column_config.NumberColumn(
+                            "Importe movido a No Gravado", format="%.2f"),
                     },
                 )
-                tot_k = sum(m["a_no_gravado"] for m in norm["modificados"])
-                tot_n = sum(m["a_otros_imp_nac"] for m in norm["modificados"])
-                st.caption(f"Total sumado a No Gravado (K): **${tot_k:,.2f}** · "
-                           f"Total sumado a Otros Imp. Nac. (N): **${tot_n:,.2f}**")
+                total_movido = sum(m["importe_movido"] for m in norm["modificados"])
+                st.caption(f"Total movido a No Gravado: **${total_movido:,.2f}** "
+                           "(antes se perdía porque JWIN no mapea esas columnas).")
 
         if norm["descartados"]:
             with st.expander(f"Ver filas descartadas ({len(norm['descartados'])})"):
@@ -1254,23 +1252,14 @@ def seccion_afip():
         # Si hay descuadres, NO habilitamos la descarga: hay que revisar a mano.
         if norm["descuadres"]:
             st.error(
-                f"❌ Hay {len(norm['descuadres'])} comprobante(s) que no cierran "
-                "(Total ≠ No Gravado + Perc. IIBB + Perc. IVA + Imp. Internos + "
-                "Otros Imp. Nac. + Neto Gravado + IVA, tolerancia $0,02; "
-                "no se controlan los comprobantes C). "
-                "No se puede bajar el archivo hasta que se resuelvan."
+                f"❌ Hay {len(norm['descuadres'])} comprobante(s) que no cuadran "
+                "(Total ≠ Neto + No Gravado + Exento + IVA + percepciones, "
+                f"tolerancia $0,05). No se puede bajar el archivo hasta que se resuelvan."
             )
             st.dataframe(
-                pd.DataFrame(norm["descuadres"])[
-                    ["proveedor", "cuit", "comprobante", "fecha",
-                     "total", "calculado", "diferencia"]
-                ],
+                pd.DataFrame(norm["descuadres"]),
                 use_container_width=True, hide_index=True,
                 column_config={
-                    "proveedor": st.column_config.TextColumn("Proveedor"),
-                    "cuit": st.column_config.TextColumn("CUIT"),
-                    "comprobante": st.column_config.TextColumn("Comprobante (tipo-PV-número)"),
-                    "fecha": st.column_config.TextColumn("Fecha"),
                     "total": st.column_config.NumberColumn("Total cabecera", format="%.2f"),
                     "calculado": st.column_config.NumberColumn("Suma columnas", format="%.2f"),
                     "diferencia": st.column_config.NumberColumn("Diferencia", format="%.2f"),
